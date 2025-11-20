@@ -1,3 +1,5 @@
 python-telegram-bot[webhooks]==21.0.1
 firebase-admin==6.3.0
 Flask==3.0.0
+aiohttp
+pypdf
