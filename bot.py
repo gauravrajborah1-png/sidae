@@ -2012,29 +2012,11 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     if update.effective_chat.id in frozen_chats:
         return await update.message.reply_text(freeze_message)
 
-    """Generates an AI welcome message for new members and registers the chat if the bot is added."""
+    """Generates an AI welcome message for new members."""
     if not update.message.new_chat_members:
         return
     if update.effective_chat.type not in ["group", "supergroup"]:
         return
-
-    # Check for bot addition first
-    for member in update.message.new_chat_members:
-        if member.id == context.bot.id:
-            if db:
-                chat_id = str(update.effective_chat.id)
-                chat_ref = db.collection("broadcast_chats").document(chat_id)
-                chat_data = {
-                    "chat_id": chat_id,
-                    "chat_type": update.effective_chat.type,
-                    "title": update.effective_chat.title or "Unknown Group", 
-                    "last_active": firestore.SERVER_TIMESTAMP,
-                }
-                try:
-                    await asyncio.to_thread(chat_ref.set, chat_data, merge=True)
-                    logger.info(f"Chat {chat_id} added to broadcast list (Bot was added).")
-                except Exception as e:
-                    logger.error(f"Failed to add chat to broadcast list: {e}")
 
     settings = await get_welcome_settings(update.effective_chat.id)
     if not settings.get("enabled"):
@@ -2114,11 +2096,42 @@ async def help_command(update: Update, context: CallbackContext):
         "/check_countdown - countdown check krte rho time to time.\n"
         "/admin - gc mein badmoshi ho rhi hai? admin ko bulaoo naa...\n"
         "/ask - questions pucho jee bharke.\n"
-        "/set_personality - kis personality mein AI based features chahiye choose krlo... friendly, sarcastic, etc😶‍🌫\n\n"
+        "/set_personality - kis personality mein AI based features chahiye choose krlo... friendly, sarcastic, etc😶‍🌫\n"
+        "/quiz <no. of questions> <chapter_name> - real time quiz generation.📚\n"
+        "/change_timing <seconds> - quiz ke each ques ke duration(should be a multiple of 5) ko change krne ke liye⏲\n"
+        "/save_chapter <chapter_name> - koi v pdf(small size) ko reply kro is command ke sath(chapter ka nam command ke baad likh dena) and then us pdf se quiz krte rho...❄🪄\n\n\n "
         "Thank you🕊\n"
         "regards- Tota Ton🐣"
     )
     await update.message.reply_text(message)
+
+
+async def bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        # Check if the bot is the new member
+        for member in update.message.new_chat_members:
+            if member.id == context.bot.id:
+                chat = update.effective_chat
+                chat_id = str(chat.id)
+                title = chat.title or "Private Chat"
+                chat_type = chat.type
+
+                ref = db.collection("broadcast_chats").document(chat_id)
+
+                # Save to Firestore (automatic)
+                await asyncio.to_thread(ref.set, {
+                    "chat_id": chat_id,
+                    "title": title,
+                    "chat_type": chat_type,
+                    "last_active": firestore.SERVER_TIMESTAMP
+                }, merge=True)
+
+                logger.info(f"[AUTO-BROADCAST] Bot added to {chat_id}. Stored automatically.")
+                return
+    except Exception as e:
+        logger.error(f"[AUTO-BROADCAST] Error: {e}")
+
+
 
 # --- NCERT Quiz Feature (New) ---
 
@@ -2212,7 +2225,8 @@ async def generate_quiz_questions(text_content: str, num_questions: int) -> list
         f"Based on the following NCERT chapter text, generate exactly {num_questions} multiple-choice questions (MCQs). "
         "The questions should cover key concepts, diagrams (if described in text), and important details. "
         "Must not make the questions very long; keep them short and important"
-        "After every question mention - @Tota_ton_bot"
+        "Every 'question' must be short and concise"
+        "Must mention - '@Tota_ton_bot' after the end of every 'question' (not after the explanation, but after the question)"
         "Return the response strictly as a **JSON list of objects**. "
         "Do NOT use markdown code blocks. Just return the raw JSON string. "
         "Each object must have these fields: "
@@ -2721,20 +2735,23 @@ def main() -> None:
     application = Application.builder().token(BOT_TOKEN).build()
 
     # --- Register Handlers ---
-
+    
     # AI Chatbot Command (Updated to handle multimodal and context)
     application.add_handler(CommandHandler("ask", ask_ai))
     application.add_handler(CommandHandler("img", generate_image_command))
     application.add_handler(CommandHandler("set_personality", set_ai_personality))
 
+
     # Public/Utility Commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("id", get_user_id))
-    application.add_handler(CommandHandler("purge", purge_messages))
+    application.add_handler(CommandHandler("purge", purge_messages)) 
     application.add_handler(CommandHandler("stats", stats))
     application.add_handler(CommandHandler("weather", weather))
     application.add_handler(CommandHandler("time", get_current_time))
     application.add_handler(CommandHandler("help", help_command))
+
+
 
     # Countdown Commands
     application.add_handler(CommandHandler("set_countdown", set_countdown))
@@ -2749,70 +2766,40 @@ def main() -> None:
     application.add_handler(CommandHandler("removewarn", remove_warn))
     application.add_handler(CommandHandler("warns", warn_counts))
     application.add_handler(CommandHandler("ban", ban_user))
-    application.add_handler(CommandHandler("unban", unban_user))
+    application.add_handler(CommandHandler("unban", unban_user)) # ID-only
     application.add_handler(CommandHandler("mute", mute_user))
     application.add_handler(CommandHandler("unmute", unmute_user))
-    application.add_handler(CommandHandler("admin", mention_admins))
     application.add_handler(CommandHandler("promote", promote_user))
-
-    # Lock / Unlock features
-    application.add_handler(CommandHandler("lock", lock_feature))
-    application.add_handler(CommandHandler("unlock", unlock_feature))
-
-    # Banned word management
-    application.add_handler(CommandHandler("ban_word", ban_word))
-    application.add_handler(CommandHandler("unban_word", unban_word))
-
-    # Filter management
     application.add_handler(CommandHandler("filter", set_filter))
     application.add_handler(CommandHandler("stop", stop_filter))
-
-    # Welcome message / broadcast / owner-only
+    
+    # Welcome Message Commands
     application.add_handler(CommandHandler("set_welcome", set_welcome_message))
     application.add_handler(CommandHandler("enable_welcome", enable_welcome))
     application.add_handler(CommandHandler("disable_welcome", disable_welcome))
 
-    # NCERT Quiz / Chapter management
-    application.add_handler(CommandHandler("save_chapter", save_chapter))
-    application.add_handler(CommandHandler("quiz", start_quiz))
-    application.add_handler(CommandHandler("change_timing", change_quiz_timing))
 
-    # Owner commands
+    # mentioning admin
+    application.add_handler(CommandHandler("admin", mention_admins))
+
+    # Lock/Unlock Commands
+    application.add_handler(CommandHandler("lock", lock_feature))
+    application.add_handler(CommandHandler("unlock", unlock_feature))
+
+    # Banned Word Commands
+    application.add_handler(CommandHandler("ban_word", ban_word))
+    application.add_handler(CommandHandler("unban_word", unban_word))
+
+    # Owner-Only Commands (Control Panel)
     application.add_handler(CommandHandler("broadcast", broadcast_message))
-    application.add_handler(CommandHandler("freeze", freeze_bot))
-    application.add_handler(CommandHandler("resume", resume_bot))
+    application.add_handler(CommandHandler("freeze_bot", freeze_bot))
+    application.add_handler(CommandHandler("resume_bot", resume_bot))
     application.add_handler(CommandHandler("list_chats", list_chats))
-    application.add_handler(CommandHandler("deny", deny))
-    application.add_handler(CommandHandler("allow", allow))
 
-    # Poll / Quiz handlers
-    # Collect poll answers (used for quiz ranking). PollAnswerHandler handles PollAnswer updates.
-    application.add_handler(PollAnswerHandler(handle_quiz_answer))
 
-    # Message handlers (non-command):
-    # 1) Banned words should be checked early
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_banned_words), group=0)
-    # 2) Filters (auto-replies) next
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_filters), group=1)
-    # 3) Link message moderation - we register for all messages because links can be in captions, entities, etc.
-    application.add_handler(MessageHandler(filters.ALL, handle_link_messages), group=2)
-
-    # New chat members (welcome)
+    # Message Handlers
+    # 1. New Member Handler (Must come first to welcome the user before other filters run)
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
-
-    # Start webhook (suitable for hosting on platforms that require webhooks)
-    try:
-        # The Application.run_webhook will block and run the webhook server.
-        # It listens on 0.0.0.0 by default; explicitly provide the PORT and WEBHOOK_URL.
-        logger.info("Starting webhook...")
-        application.run_webhook(
-            listen="0.0.0.0",
-            port=PORT,
-            webhook_url=WEBHOOK_URL,
-        )
-    except Exception as e:
-        logger.exception(f"Failed to start webhook: {e}")
-
-
-if __name__ == "__main__":
-    main()
+    
+    # 2. Bot Added Handler (For Automatic Broadcast List Addition)
+    # FIX: Registered
