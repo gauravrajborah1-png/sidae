@@ -2741,7 +2741,6 @@ def main() -> None:
     application.add_handler(CommandHandler("img", generate_image_command))
     application.add_handler(CommandHandler("set_personality", set_ai_personality))
 
-
     # Public/Utility Commands
     application.add_handler(CommandHandler("start", start_command))
     application.add_handler(CommandHandler("id", get_user_id))
@@ -2750,8 +2749,6 @@ def main() -> None:
     application.add_handler(CommandHandler("weather", weather))
     application.add_handler(CommandHandler("time", get_current_time))
     application.add_handler(CommandHandler("help", help_command))
-
-
 
     # Countdown Commands
     application.add_handler(CommandHandler("set_countdown", set_countdown))
@@ -2763,7 +2760,7 @@ def main() -> None:
 
     # Admin/Management Commands (Now support reply, @username, or ID)
     application.add_handler(CommandHandler("warn", warn_user))
-    application.add_handler(CommandHandler("removewarn", remove_warn))
+    application.add_handler(CommandHandler("remove_warn", remove_warn))
     application.add_handler(CommandHandler("warns", warn_counts))
     application.add_handler(CommandHandler("ban", ban_user))
     application.add_handler(CommandHandler("unban", unban_user)) # ID-only
@@ -2778,8 +2775,7 @@ def main() -> None:
     application.add_handler(CommandHandler("enable_welcome", enable_welcome))
     application.add_handler(CommandHandler("disable_welcome", disable_welcome))
 
-
-    # mentioning admin
+    # Mentioning admin
     application.add_handler(CommandHandler("admin", mention_admins))
 
     # Lock/Unlock Commands
@@ -2796,10 +2792,40 @@ def main() -> None:
     application.add_handler(CommandHandler("resume_bot", resume_bot))
     application.add_handler(CommandHandler("list_chats", list_chats))
 
+    # NCERT Quiz Feature
+    application.add_handler(CommandHandler("save_chapter", save_chapter))
+    application.add_handler(CommandHandler("quiz", start_quiz))
+    application.add_handler(CommandHandler("change_timing", change_quiz_timing))
 
     # Message Handlers
     # 1. New Member Handler (Must come first to welcome the user before other filters run)
     application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, handle_new_member))
-    
+
     # 2. Bot Added Handler (For Automatic Broadcast List Addition)
-    # FIX: Registered
+    application.add_handler(MessageHandler(filters.StatusUpdate.NEW_CHAT_MEMBERS, bot_added_to_group))
+
+    # 3. Handle Filters (Text, Sticker, Image Trigger by Keyword)
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_filters))
+
+    # 4. Handle Banned Words (Delete and Warn for Text)
+    application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_banned_words))
+
+    # 5. Handle Unapproved Links (Delete and Warn for Message Links)
+    application.add_handler(MessageHandler(filters.Entity("url") | filters.Entity("text_link"), handle_link_messages))
+
+    # 6. Poll Answer Handler (Quiz responses)
+    application.add_handler(PollAnswerHandler(handle_quiz_answer))
+
+    # 7. Poll Handler (Required for quiz-type poll answers)
+    application.add_handler(PollHandler(handle_quiz_answer))  # Optional, for completeness
+
+    # --- Start the Bot via Webhook ---
+    application.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path=BOT_TOKEN,
+        webhook_url=WEBHOOK_URL + "/" + BOT_TOKEN,
+    )
+
+if __name__ == "__main__":
+    main()
