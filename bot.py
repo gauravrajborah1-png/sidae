@@ -670,14 +670,29 @@ async def _delete_active_poll_from_db(poll_id: str):
     except Exception as e:
         logger.debug(f"Failed to delete active_poll {poll_id} from DB: {e}")
 
+# ---------- Replace existing persistence helpers and handler with these updated versions ----------
+
 async def _save_quiz_session_to_db(group_id: int, session: dict):
+    """Save active quiz session to Firestore. Normalize user-id keys to strings for Firestore."""
     if not db:
         return
     try:
-        # make sure poll_ids and scores are serializable
+        # Convert user-id keys to strings for Firestore compatibility
+        scores = session.get("scores", {}) or {}
+        serializable_scores = {}
+        for uid, stats in scores.items():
+            # Ensure uid is string
+            key = str(uid)
+            # minimal normalization of nested stats to avoid Firestore issues
+            serializable_scores[key] = {
+                "name": stats.get("name"),
+                "score": int(stats.get("score", 0)),
+                "total_time": float(stats.get("total_time", 0.0))
+            }
+
         doc = {
             "poll_ids": session.get("poll_ids", []),
-            "scores": session.get("scores", {}),
+            "scores": serializable_scores,
             "last_updated": firestore.SERVER_TIMESTAMP
         }
         ref = db.collection("live_quiz_sessions").document(str(group_id))
@@ -686,6 +701,7 @@ async def _save_quiz_session_to_db(group_id: int, session: dict):
         logger.error(f"Failed to save quiz_session for {group_id} to DB: {e}")
 
 async def _load_quiz_session_from_db(group_id: int):
+    """Load quiz session and convert score keys back to ints when possible."""
     if not db:
         return None
     try:
@@ -694,13 +710,28 @@ async def _load_quiz_session_from_db(group_id: int):
         if not doc.exists:
             return None
         data = doc.to_dict() or {}
+        raw_scores = data.get("scores", {}) or {}
+        # Convert keys that are numeric strings back to ints (best effort)
+        scores = {}
+        for k, v in raw_scores.items():
+            try:
+                ik = int(k) if isinstance(k, str) and k.isdigit() else k
+            except Exception:
+                ik = k
+            # Ensure the stats shape is sane
+            scores[ik] = {
+                "name": v.get("name", ""),
+                "score": int(v.get("score", 0)),
+                "total_time": float(v.get("total_time", 0.0))
+            }
         return {
             "poll_ids": data.get("poll_ids", []),
-            "scores": data.get("scores", {})
+            "scores": scores
         }
     except Exception as e:
         logger.error(f"Failed to load quiz_session for {group_id} from DB: {e}")
         return None
+
 
 async def _delete_quiz_session_from_db(group_id: int):
     if not db:
@@ -2257,19 +2288,24 @@ async def generate_quiz_questions(text_content: str, num_questions: int) -> list
         return []
 
 
-# --- Modified handle_quiz_answer (persisted fallback) ---
+
+
 async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles incoming poll answers to track scores. Falls back to Firestore if in-memory state missing."""
+    """Handles incoming poll answers to track scores. Robust to in-memory/DB reloads and string/int id mismatches."""
     try:
-        answer = update.poll_answer
+        answer = getattr(update, "poll_answer", None)
+        # If this is a Poll update (not PollAnswer), ignore here
         if not answer:
+            # Log and return; PollHandler may call this with update.poll - we don't process that here.
+            if getattr(update, "poll", None):
+                logger.debug("[quiz] Received Poll update (not PollAnswer) - ignoring in answer handler.")
             return
 
         poll_id = str(answer.poll_id)
         user = answer.user
         selected_ids = answer.option_ids
 
-        logger.info(f"[quiz] Received poll answer from {getattr(user, 'id', None)} for poll {poll_id}. Selected: {selected_ids}")
+        logger.info(f"[quiz] Received poll answer from user_id={getattr(user, 'id', None)} for poll {poll_id}. Selected: {selected_ids}")
 
         # Try in-memory first
         poll_data = active_polls.get(poll_id)
@@ -2280,44 +2316,41 @@ async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 # restore into memory for faster subsequent operations
                 active_polls[poll_id] = poll_data
                 logger.info(f"[quiz] Restored active poll {poll_id} from Firestore for chat {poll_data.get('chat_id')}.")
-
+        
+        # If still not found, attempt to find session containing this poll id (scan DB)
         if not poll_data:
-            # Fallback: attempt to find session that contains this poll id in DB
-            try:
-                # Query live_quiz_sessions collection for any doc containing this poll_id
-                if db:
+            if db:
+                try:
                     sessions_ref = db.collection("live_quiz_sessions")
-                    # This is a simple linear scan — fine for small number of active quizzes.
                     docs = await asyncio.to_thread(sessions_ref.stream)
                     found = False
                     for doc in docs:
                         d = doc.to_dict() or {}
-                        poll_ids = d.get("poll_ids", [])
+                        poll_ids = d.get("poll_ids", []) or []
                         if poll_id in poll_ids:
-                            # Found the session; load it into memory and recreate an active_polls entry with unknown correct_option
                             group_id = int(doc.id)
                             session = await _load_quiz_session_from_db(group_id)
                             if session is None:
                                 session = {"poll_ids": poll_ids, "scores": {}}
                             quiz_sessions[group_id] = session
-                            # attempt to load the specific active poll doc (may exist)
-                            poll_data = await _load_active_poll_from_db(poll_id)
-                            if not poll_data:
-                                poll_data = {"chat_id": group_id, "correct_option": None, "start_time": datetime.now(timezone.utc)}
-                                # persist a basic record so later answers find it
-                                await _save_active_poll_to_db(poll_id, poll_data)
-                                active_polls[poll_id] = poll_data
+                            # create a best-effort active poll record
+                            pd = await _load_active_poll_from_db(poll_id)
+                            if not pd:
+                                pd = {"chat_id": group_id, "correct_option": None, "start_time": datetime.now(timezone.utc)}
+                                await _save_active_poll_to_db(poll_id, pd)
+                            active_polls[poll_id] = pd
+                            poll_data = pd
                             found = True
                             logger.info(f"[quiz] Recovered poll {poll_id} into quiz_sessions for chat {group_id}.")
                             break
                     if not found:
-                        logger.info(f"[quiz] Poll {poll_id} not found in active_polls and no session matched. Ignoring.")
+                        logger.info(f"[quiz] Poll {poll_id} not found in active_polls and no session matched. Ignoring answer.")
                         return
-                else:
-                    logger.info(f"[quiz] No DB configured and poll {poll_id} not in memory — ignoring.")
+                except Exception as e:
+                    logger.exception(f"[quiz] Error while attempting to recover poll {poll_id} from DB: {e}")
                     return
-            except Exception as e:
-                logger.exception(f"[quiz] Error while attempting to recover poll {poll_id} from DB: {e}")
+            else:
+                logger.info(f"[quiz] No DB configured and poll {poll_id} not in memory — ignoring.")
                 return
 
         chat_id = poll_data['chat_id']
@@ -2335,23 +2368,31 @@ async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
         scores = session.setdefault('scores', {})
 
-        user_stats = scores.get(user.id, {
+        # Look up by int user.id or its string representation (be tolerant)
+        uid_int = getattr(user, "id", None)
+        uid_key = uid_int if uid_int in scores else str(uid_int) if str(uid_int) in scores else str(uid_int)
+
+        user_stats = scores.get(uid_key, {
             'name': getattr(user, 'full_name', getattr(user, 'username', 'Unknown')),
             'score': 0,
             'total_time': 0.0
         })
 
+        # Always normalize stored key to string to keep DB stable
         user_stats['name'] = getattr(user, 'full_name', getattr(user, 'username', user_stats.get('name')))
-
         if correct_id is not None and correct_id in selected_ids:
-            user_stats['score'] += 1
-            user_stats['total_time'] += time_taken
-            logger.info(f"[quiz] User {user.id} answered CORRECTLY for poll {poll_id}.")
+            user_stats['score'] = int(user_stats.get('score', 0)) + 1
+            user_stats['total_time'] = float(user_stats.get('total_time', 0.0)) + float(time_taken)
+            logger.info(f"[quiz] User {uid_int} answered CORRECTLY for poll {poll_id}. New score: {user_stats['score']}")
         else:
-            logger.info(f"[quiz] User {user.id} answered INCORRECTLY for poll {poll_id}.")
+            logger.info(f"[quiz] User {uid_int} answered INCORRECTLY for poll {poll_id}.")
 
-        # Save back to session in memory and persist
-        quiz_sessions[chat_id]['scores'][user.id] = user_stats
+        # persist using string key
+        scores[str(uid_int)] = user_stats
+        # Update in-memory session
+        quiz_sessions[chat_id]['scores'] = scores
+
+        # Persist the session to DB
         await _save_quiz_session_to_db(chat_id, quiz_sessions[chat_id])
 
     except Exception as e:
