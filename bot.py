@@ -1695,7 +1695,7 @@ async def unmute_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Resolve target user info
     target_id, target_name_or_error = await get_target_user_info(update, context)
 
-    If not target_id:
+    if not target_id:
         await update.message.reply_text(target_name_or_error, parse_mode="Markdown")
         return
 
