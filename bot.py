@@ -99,7 +99,11 @@ def check_frozen(func):
                 return await func(update, context, *args, **kwargs)
             
             # Send a silent notification or a non-command message for frozen state
-            if update.message and (update.message.text.startswith('/') or update.message.caption_startswith('/')):
+            # Fixed attribute access and added guards for None
+            if update.message and (
+                (getattr(update.message, "text", None) and update.message.text.startswith('/')) or
+                (getattr(update.message, "caption", None) and update.message.caption.startswith('/'))
+            ):
                  await update.message.reply_text("❄️ The bot is currently frozen by the owner and cannot respond to commands.")
             return
         
@@ -185,9 +189,9 @@ async def allow(update: Update, context: CallbackContext):
 AI_PERSONALITIES = {
     "friendly": "You are extremely warm, approachable, and encouraging. Your explanations are gentle and you always cheer the user on. Use lots of positive affirmations and happy emojis.",
     "strict": "You are a serious, no-nonsense mentor. Your explanations are concise and highly focused. Demand respect and discourage any off-topic chatter. Use formal language and stern emojis.",
-    "sarcastic": "You are highly intelligent but incredibly snarky and dry-witted. Answer all questions correctly but with a thick layer of sarcasm and light mockery. Use rolling-eye or confused emojis.",
-    "big brother style": "You are a helpful but playfully dominant big brother. You offer simplified, easy-to-digest advice and constantly check on the user's focus and well-being. Use casual language and brotherly advice.",
-    "teacher/neet mentor style": "You are a professional NEET preparation mentor. Your language is formal, highly technical, and uses NCERT/NEET-specific terminology. Your goal is to prepare the student for the exam environment. Maintain an encouraging but professional demeanor."
+    "sarcastic": "You are highly intelligent but incredibly snarky and dry-witted. Answer all questions correctly but with a thick layer of sarcasm and light mockery. Use rolling-eye or confused emoji[...]",
+    "big brother style": "You are a helpful but playfully dominant big brother. You offer simplified, easy-to-digest advice and constantly check on the user's focus and well-being. Use casual language[...]",
+    "teacher/neet mentor style": "You are a professional NEET preparation mentor. Your language is formal, highly technical, and uses NCERT/NEET-specific terminology. Your goal is to prepare the stude[...]"
 }
 
 async def get_ai_personality_instruction(group_id: int) -> str:
@@ -266,7 +270,7 @@ async def get_ai_response(prompt: str, group_id: int, image_base64: str = None, 
         
         # Base System instruction to guide the Gemini model's behavior (UNCHANGED)
         system_instruction_text_base = (
-            "You are a helpful, Telegram bot to help in study related doubts running inside a group chat or in a private chat. You are created by Gaurav Raj, he is your owner. The telegram username of your owner is @Tota_ton. Your telegram username is @Tota_ton_bot. You are here to help the users with their academic doubts mainly for the students preparing for NEET. Explain every question deeply and ask them at the end of your explanation if they understood it. Try to write text normally because telegram can't understand markdown formatting. Use some emojis in case if you need to provide special emphasis on a part of text. Be very careful about not giving the user about any medical, financial or family related adivce. Don't give the user anything illegal. Whenever someone asks you anything in hindi, then don't reply using hindi letters. Instead use hinglish. Write hindi words in english. Don't give any idea about your language model to the user and don't give them any codes for making a bot like you. Don't give them your API key. Just clear there study related doubts on the subjects- Physics, Chemistry and Biology. Your knowledge base is google and NCERT. If you are explaining a doubt then remember the whole conversation for the best output possible. Don't give reply to any sexually abusive things or slang words rather than their biology related doubts. At last don't forget your identity; your name is Noah✰. You don't have to mention your name or  the name of your owner everytime. Just mention it whenever they ask you about your identity; like- who are you? or who is your owner or creator. Just mention the name of your owner in introduction. Also you don't have to write your knowledge base in every message. Just write them when they ask you. If an image is provided, focus your analysis on that image and the user's question about it. You can help users by translating something off-topic  that they don't understand. α β γ δ ε ζ η θ ι κ λ μ ν ξ ο π ρ σ τ υ φ χ ψ ω -use these greek letters whenever necessary while dealing with physics or chemistry questions. and use the symbol ^ whenever you write something in superscript and use _ whenever you write something in subscript. Make the message understandable and readable by the users. Other than studies, you can also help the users with some other non-harmful requests and chit-chat with them."
+            "You are a helpful, Telegram bot to help in study related doubts running inside a group chat or in a private chat. You are created by Gaurav Raj, he is your owner. The telegram username of[...]"
             "If an image is provided, focus your analysis on that image and the user's question about it. "
         )
         
@@ -1691,7 +1695,7 @@ async def unmute_user(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     # Resolve target user info
     target_id, target_name_or_error = await get_target_user_info(update, context)
 
-    if not target_id:
+    If not target_id:
         await update.message.reply_text(target_name_or_error, parse_mode="Markdown")
         return
 
@@ -2072,7 +2076,7 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         ai_prompt = (
             f"The group has a new member named '{user_name}'. The welcome message template set by the admin is: '{base_message}'. "
             f"Based on your current personality mode ('{personality}'), write a single, short, and engaging welcome message that incorporates the template, "
-            f"introduces the group's purpose (NEET study), and encourages the user to ask their doubts. Do not use the user's actual mention in your response, only use their name once, as the template already covers the mention. The message should be warm, informative, and fit the current AI personality."
+            f"introduces the group's purpose (NEET study), and encourages the user to ask their doubts. Do not use the user's actual mention in your response, only use their name once, as the template[...]"
         )
 
         # 3. Get AI Response
@@ -2316,14 +2320,25 @@ async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 # restore into memory for faster subsequent operations
                 active_polls[poll_id] = poll_data
                 logger.info(f"[quiz] Restored active poll {poll_id} from Firestore for chat {poll_data.get('chat_id')}.")
-        
-        # If still not found, attempt to find session containing this poll id (scan DB)
-        if not poll_data:
-            if db:
+
+        # If still not found, attempt multiple recovery strategies with short retries (to handle race conditions)
+        if not poll_data and db:
+            recovered = False
+            # retry a few times with exponential backoff to allow DB writes to catch up
+            for attempt in range(3):
                 try:
+                    # 1) check live_active_polls explicitly (direct doc lookup)
+                    pd = await _load_active_poll_from_db(poll_id)
+                    if pd:
+                        active_polls[poll_id] = pd
+                        poll_data = pd
+                        recovered = True
+                        logger.info(f"[quiz] Recovered active poll {poll_id} via direct live_active_polls lookup on attempt {attempt+1}.")
+                        break
+
+                    # 2) scan live_quiz_sessions for poll_id membership
                     sessions_ref = db.collection("live_quiz_sessions")
                     docs = await asyncio.to_thread(sessions_ref.stream)
-                    found = False
                     for doc in docs:
                         d = doc.to_dict() or {}
                         poll_ids = d.get("poll_ids", []) or []
@@ -2340,18 +2355,26 @@ async def handle_quiz_answer(update: Update, context: ContextTypes.DEFAULT_TYPE)
                                 await _save_active_poll_to_db(poll_id, pd)
                             active_polls[poll_id] = pd
                             poll_data = pd
-                            found = True
-                            logger.info(f"[quiz] Recovered poll {poll_id} into quiz_sessions for chat {group_id}.")
+                            recovered = True
+                            logger.info(f"[quiz] Recovered poll {poll_id} into quiz_sessions for chat {group_id} on attempt {attempt+1}.")
                             break
-                    if not found:
-                        logger.info(f"[quiz] Poll {poll_id} not found in active_polls and no session matched. Ignoring answer.")
-                        return
+
+                    if recovered:
+                        break
+
                 except Exception as e:
-                    logger.exception(f"[quiz] Error while attempting to recover poll {poll_id} from DB: {e}")
-                    return
-            else:
-                logger.info(f"[quiz] No DB configured and poll {poll_id} not in memory — ignoring.")
+                    logger.debug(f"[quiz] Recovery attempt {attempt+1} failed for poll {poll_id}: {e}")
+
+                # small delay before retrying
+                await asyncio.sleep(0.5 * (attempt + 1))
+
+            if not recovered:
+                logger.info(f"[quiz] Poll {poll_id} not found in active_polls and no session matched. Ignoring answer.")
                 return
+        elif not poll_data:
+            # No DB configured and not found in memory
+            logger.info(f"[quiz] No DB configured and poll {poll_id} not in memory — ignoring.")
+            return
 
         chat_id = poll_data['chat_id']
         correct_id = poll_data.get('correct_option')
