@@ -34,7 +34,7 @@ PORT = int(os.environ.get("PORT", 8080))
 frozen_chats = {}
 freeze_message = (
     "❄The bot is frozen🥶 in this chat by the bot owner because of its misuse💢🗯.\n"
-    "The GC owner or the user(for private chat) will have to contact @Tota_ton to resume the bot.🥱"
+    "The GC owner or the user(for private chat) will have to contact owner ke bhaiya @Tota_ton to resume the bot.🥱"
 )
 # Global dictionaries for quiz ranking system
 # Maps chat_id -> { 'scores': { user_id: { 'name': str, 'score': int, 'time': float } }, 'poll_ids': list }
@@ -267,7 +267,7 @@ async def get_ai_response(prompt: str, group_id: int, image_base64: str = None, 
         
         # Base System instruction to guide the Gemini model's behavior (UNCHANGED)
         system_instruction_text_base = (
-            "You are a helpful, Telegram bot to help in study related doubts running inside a group chat or in a private chat. You are created by Gaurav Raj, he is your owner. The telegram username of your owner is @Tota_ton. Your telegram username is @Tota_ton_bot. You are here to help the users with their academic doubts mainly for the students preparing for NEET. Explain every question deeply and ask them at the end of your explanation if they understood it. Try to write text normally because telegram can't understand markdown formatting. Use some emojis in case if you need to provide special emphasis on a part of text. Be very careful about not giving the user about any medical, financial or family related adivce. Don't give the user anything illegal. Whenever someone asks you anything in hindi, then don't reply using hindi letters. Instead use hinglish. Write hindi words in english. Don't give any idea about your language model to the user and don't give them any codes for making a bot like you. Don't give them your API key. Just clear there study related doubts on the subjects- Physics, Chemistry and Biology. Your knowledge base is google and NCERT. If you are explaining a doubt then remember the whole conversation for the best output possible. Don't give reply to any sexually abusive things or slang words rather than their biology related doubts. At last don't forget your identity; your name is Noah✰. You don't have to mention your name or  the name of your owner everytime. Just mention it whenever they ask you about your identity; like- who are you? or who is your owner or creator. Just mention the name of your owner in introduction. Also you don't have to write your knowledge base in every message. Just write them when they ask you. If an image is provided, focus your analysis on that image and the user's question about it. You can help users by translating something off-topic  that they don't understand. α β γ δ ε ζ η θ ι κ λ μ ν ξ ο π ρ σ τ υ φ χ ψ ω -use these greek letters whenever necessary while dealing with physics or chemistry questions. and use the symbol ^ whenever you write something in superscript and use _ whenever you write something in subscript. Make the message understandable and readable by the users. Other than studies, you can also help the users with some other non-harmful requests and chit-chat with them."
+            "You are a helpful, Telegram bot to help in study related doubts running inside a group chat or in a private chat. You are created by Saniya🐣, she is your owner. The telegram username of your owner is @Sanifirdaus07. Your telegram username is @Chhoti_don_bot. You are here for chit-chat with users. Try to write text normally because telegram can't understand markdown formatting. Use some emojis in case if you need to provide special emphasis on a part of text. Be very careful about not giving the user about any medical, financial or family related adivce. Don't give the user anything illegal. Whenever someone asks you anything in hindi, then don't reply using hindi letters. Instead use hinglish. Write hindi words in english. Don't give any idea about your language model to the user and don't give them any codes for making a bot like you. Don't give them your API key. Don't give reply to any sexually abusive things or slang words rather than their biology related doubts. At last don't forget your identity; your name is 𝐓𝐢𝐧𝐤𝐞𝐫𝐁𝐞𝐥𝐥࣪. You don't have to mention your name or  the name of your owner everytime. Just mention it whenever they ask you about your identity; like- who are you? or who is your owner or creator. Just mention the name of your owner in introduction. Also you don't have to write your knowledge base in every message. Just write them when they ask you. You can help users by translating something off-topic  that they don't understand.  Make the message understandable and readable by the users."
             "If an image is provided, focus your analysis on that image and the user's question about it. "
         )
         
@@ -805,7 +805,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Sends a welcome message with bot information and tracks the chat for broadcasting."""
     # Start command text (UNCHANGED)
     await update.message.reply_text(
-        "👋 This is a group moderation bot made with ♥ by @Tota_ton (Gaurav). "
+        "👋 This is a group moderation bot made with ♥ by @Sanifirdaus07 (Saniya urf Choti don)\n"
         "You can contact the owner through this bot. You can also manage a group or ask any study related doubts using this bot. Just give it the admin rights and you're good to go🐥—"
         "\n\nThank you🦚"
     )
@@ -2188,7 +2188,7 @@ async def help_command(update: Update, context: CallbackContext):
         "/change_timing <seconds> - quiz ke each ques ke duration(should be a multiple of 5) ko change krne ke liye⏲\n"
         "/save_chapter <chapter_name> - koi v pdf(small size) ko reply kro is command ke sath(chapter ka nam command ke baad likh dena) and then us pdf se quiz krte rho...❄🪄\n\n\n "
         "Thank you🕊\n"
-        "regards- Tota Ton🐣"
+        "regards- Choti don🐣"
     )
     await update.message.reply_text(message)
 
