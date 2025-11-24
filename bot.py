@@ -49,7 +49,7 @@ GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini
 GEMINI_MODEL = "gemini-2.5-flash-preview-09-2025"
 
 # OPEN weather API
-OPENWEATHER_API_KEY = "448363a2df79d98e17ec8757a092dc1a"
+OPENWEATHER_API_KEY = "71f9cff3b805051c09d0c73f0ff81424"
 
 # 2. Logging Setup
 logging.basicConfig(
