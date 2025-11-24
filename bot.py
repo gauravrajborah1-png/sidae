@@ -2313,7 +2313,7 @@ async def generate_quiz_questions(text_content: str, num_questions: int) -> list
         "The questions should cover key concepts, diagrams (if described in text), and important details. "
         "Number of characters or letters in each 'question' must not exceed 250"
         "Every 'question' must be short and concise"
-        "Must mention - '@Tota_ton_bot' after the end of every 'question' (not after the explanation, but after the question)"
+        "Must mention - '@Chhoti_don_bot' after the end of every 'question' (not after the explanation, but after the question)"
         "Return the response strictly as a **JSON list of objects**. "
         "Do NOT use markdown code blocks. Just return the raw JSON string. "
         "Each object must have these fields: "
