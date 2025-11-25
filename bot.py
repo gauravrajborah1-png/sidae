@@ -320,7 +320,7 @@ async def get_ai_response(prompt: str, group_id: int, image_base64: str = None, 
 
         except requests.exceptions.HTTPError as e:
             logger.error(f"Gemini HTTP Error: {e.response.status_code} - {e.response.text}")
-            return f"👋 Welcome to the group!
+            return f"""👋 Welcome to the group!
 We’re glad to have you here. Feel free to introduce yourself and join the discussions! 😄
 
 📌 Some quick tips:
@@ -331,7 +331,7 @@ No spam or unrelated promotions.
 
 Check the pinned messages for group rules and important info.
 
-Let’s make this space fun and helpful for everyone! 🚀"
+Let’s make this space fun and helpful for everyone! 🚀"""
         except requests.exceptions.RequestException as e:
             logger.error(f"Gemini Request Error: {e}")
             return "⚠️ Please try again later."
