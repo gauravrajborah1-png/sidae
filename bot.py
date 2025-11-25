@@ -320,10 +320,21 @@ async def get_ai_response(prompt: str, group_id: int, image_base64: str = None, 
 
         except requests.exceptions.HTTPError as e:
             logger.error(f"Gemini HTTP Error: {e.response.status_code} - {e.response.text}")
-            return f"⚠️ Error ({e.response.status_code}): Failed to get a response from the AI. Check your API key or rate limits."
+            return f"👋 Welcome to the group!
+We’re glad to have you here. Feel free to introduce yourself and join the discussions! 😄
+
+📌 Some quick tips:
+
+Be respectful and kind to everyone.
+
+No spam or unrelated promotions.
+
+Check the pinned messages for group rules and important info.
+
+Let’s make this space fun and helpful for everyone! 🚀"
         except requests.exceptions.RequestException as e:
             logger.error(f"Gemini Request Error: {e}")
-            return "⚠️ Error: Could not connect to the AI service. Please try again later."
+            return "⚠️ Please try again later."
         except Exception as e:
             logger.error(f"General AI Error: {e}")
             return "An unexpected error occurred while processing the AI request."
