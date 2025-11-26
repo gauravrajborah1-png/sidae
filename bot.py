@@ -2113,9 +2113,10 @@ async def disable_welcome(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         logger.error(f"Error disabling welcome: {e}")
         await update.message.reply_text(f"Failed to disable welcome messages: {e}")
 
+
 @check_frozen
 async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Generates an AI welcome message for new members."""
+    """Welcomes new members — uses custom template if set, AI only if not."""
     if not update.message.new_chat_members:
         return
     if update.effective_chat.type not in ["group", "supergroup"]:
@@ -2126,58 +2127,55 @@ async def handle_new_member(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         return
 
     group_name = update.effective_chat.title or ""
-    template = settings.get("template") or settings.get("welcome_message_template") or "Hello {name}, welcome to the group!"
-    
+
+    # 🔥 Support both possible keys so we never miss the template
+    template = (
+        settings.get("welcome_message_template") or
+        settings.get("template")
+    )
+
     for member in update.message.new_chat_members:
-        # Ignore welcoming the bot itself
         if member.id == context.bot.id:
             continue
-            
-        user_name = member.full_name or member.username or "there"
-        mention_html = member.mention_html()  # safe HTML mention produced by telegram lib
 
-        # Safely build the base_message. The admin template may be malformed (missing placeholders),
-        # so catch formatting errors and fall back to a minimal safe template.
-        try:
-            # We provide the HTML mention directly into the template replacement for `{name}`.
-            base_message = template.format(name=mention_html, group_name=html.escape(group_name))
-        except Exception as e:
-            logger.warning(f"Welcome template formatting failed: {e}. Falling back to default message.")
-            # Fallback: construct a minimal safe HTML message
-            base_message = f"Hello {mention_html}, welcome to {html.escape(group_name)}!"
+        mention_html = member.mention_html()
+        username = member.full_name or member.username or "there"
 
+        # ===== CASE 1: TEMPLATE IS SET → DO NOT USE AI =====
+        if template:
+            try:
+                message = template.format(
+                    name=mention_html,
+                    group_name=html.escape(group_name)
+                )
+            except Exception as e:
+                logger.warning(f"Template error: {e}")
+                message = f"Hello {mention_html}, welcome to {html.escape(group_name)}!"
+
+            try:
+                await update.message.reply_text(message, parse_mode="HTML")
+            except:
+                await update.message.reply_text(html.escape(message), parse_mode="HTML")
+            continue
+
+        # ===== CASE 2: NO TEMPLATE → USE AI =====
         personality = settings.get("ai_mode", "default")
         ai_prompt = (
-            f"The group has a new member named '{user_name}'. The welcome message template set by the admin is: '{html.escape(base_message)}'. "
-            f"Based on your current personality mode ('{personality}'), write a single, short, and engaging welcome message that incorporates the template, "
-            f"introduces the group's purpose (NEET study), and encourages the user to ask their doubts. Do not repeat the mention; use the name once only. The message should be warm, informative, and fit the current AI personality."
+            f"A new member '{username}' joined '{group_name}'. "
+            "Write a short warm welcome encouraging doubts and participation. "
+            "Use ONE mention only."
         )
 
         await context.bot.send_chat_action(update.effective_chat.id, "typing")
-        ai_response_text = await get_ai_response(ai_prompt, update.effective_chat.id)
+        ai_text = await get_ai_response(ai_prompt, update.effective_chat.id)
 
-        # Try sending the AI response as HTML. If a parse error occurs, send an escaped fallback so message still appears.
+        final_msg = f"{mention_html}\n\n{ai_text}"
+
         try:
-            await update.message.reply_text(ai_response_text, parse_mode="HTML")
-        except Exception as e:
-            # Common failure: "Can't parse entities" — log and fallback to escaped HTML send
-            logger.warning(f"Failed to send AI welcome with HTML parse_mode: {e}. Sending escaped fallback.")
-            safe_text = html.escape(ai_response_text)
-            # If the admin template included the mention (HTML) we should ensure at least mention is present.
-            # If base_message contains mention_html, use that mention then append safe_text (to keep mention clickable)
-            if mention_html in base_message:
-                # Place the mention followed by the safe AI response (so mention remains clickable)
-                try:
-                    await update.message.reply_text(f"{mention_html}\n\n{safe_text}", parse_mode="HTML")
-                except Exception:
-                    # Last-resort plain text send (no parse mode)
-                    await update.message.reply_text(f"{member.full_name or member.username}, welcome! {ai_response_text}")
-            else:
-                # No mention present in base_message — safe plain fallback
-                try:
-                    await update.message.reply_text(safe_text, parse_mode="HTML")
-                except Exception:
-                    await update.message.reply_text(ai_response_text)
+            await update.message.reply_text(final_msg, parse_mode="HTML")
+        except:
+            await update.message.reply_text(f"{username}, {ai_text}")
+
 
 
 
