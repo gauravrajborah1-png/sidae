@@ -705,6 +705,41 @@ async def update_warn_count(group_id: int, user_id: int, change: int):
         logger.error(f"Error updating warn count: {e}")
         return current_warnings
 
+
+async def update_user_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stores/updates the user's data (ID, username, name, timestamp) in Firestore.
+    
+    This function uses merge=True so it only updates the specified fields 
+    and does not disturb other existing data for the user.
+    """
+    # Ensure this update originated from a specific user (and not a channel or service message without a user)
+    if update.effective_user:
+        user = update.effective_user
+        
+        # We only want to log real users, not bots
+        if user.is_bot:
+            return
+
+        user_data = {
+            # user_id is redundant but helpful for indexing/querying
+            'user_id': user.id, 
+            'username': user.username,
+            'first_name': user.first_name,
+            'last_name': user.last_name,
+            # Use Firestore's server timestamp to accurately track the last interaction time
+            'last_seen': firestore.SERVER_TIMESTAMP, 
+        }
+
+        # Use the user ID as the document ID for efficient lookups
+        try:
+            # The .set(..., merge=True) ensures that we only update these fields 
+            # and create the document if it doesn't exist, preserving any other user data.
+            db.collection('users').document(str(user.id)).set(user_data, merge=True)
+            # logging.debug(f"User data updated for ID: {user.id}") # Uncomment for debugging
+        except Exception as e:
+            # Log any potential errors with the database operation
+            logging.error(f"Error updating user data for {user.id}: {e}")
+        
 # --- Firestore persistence helpers for live quiz state ---
 
 # --- Firestore persistence helpers (PASTE THIS BLOCK BEFORE START_QUIZ) ---
@@ -3007,6 +3042,15 @@ def main() -> None:
 
     #2. bot fires the command /start automatically so that it shows the welcome message and stores the chat id to database
     application.add_handler(ChatMemberHandler(bot_added_to_group, ChatMemberHandler.MY_CHAT_MEMBER))
+
+    # 2.5. Track User Activity (Low Priority)
+    # This handler captures all standard messages (excluding explicit commands) 
+    # to passively update user data in Firestore.
+    # group=10 ensures it runs after all command and primary filter handlers (which default to group 0).
+    application.add_handler(
+        MessageHandler(filters.ALL & (~filters.COMMAND), update_user_data), 
+        group=10
+    )
 
     # 3. Handle Filters (Text, Sticker, Image Trigger by Keyword)
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_filters))
