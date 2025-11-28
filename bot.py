@@ -3052,6 +3052,8 @@ def main() -> None:
         group=10
     )
 
+    application.add_handler(MessageHandler(filters.Entity("url") | filters.Entity("text_link"), handle_link_messages))
+
     # 3. Handle Filters (Text, Sticker, Image Trigger by Keyword)
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_filters))
 
@@ -3059,7 +3061,7 @@ def main() -> None:
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_banned_words))
 
     # 5. Handle Unapproved Links (Delete and Warn for Message Links)
-    application.add_handler(MessageHandler(filters.Entity("url") | filters.Entity("text_link"), handle_link_messages))
+    
 
     # 6. Poll Answer Handler (Quiz responses)
     application.add_handler(PollAnswerHandler(handle_quiz_answer))
