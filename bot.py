@@ -349,36 +349,68 @@ async def ask_ai(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return await update.message.reply_text(freeze_message)
 
     """
-    Handles the /ask command, supporting image recognition via reply and
-    conversational context via reply to a text message, and QUIZ SOLVING.
+    Handles the /ask command, mentions, replies to the bot, and QUIZ SOLVING.
     """
     
     if not GEMINI_API_KEY:
         await update.message.reply_text("The Gemini AI service is not configured. Please set the GEMINI_API_KEY environment variable.")
         return
 
-    # 1. Determine Prompt, Image, and Mime Type
-    prompt = " ".join(context.args)
+    # --- 1. Determine Prompt & Intent ---
+    message = update.message
+    reply = message.reply_to_message
+    
+    # Get raw text (handle captions if image is sent)
+    text_body = message.text or message.caption or ""
+    
+    # Initialize prompt
+    prompt = ""
+    
+    # Check if this is a Command, a Mention, or a Reply
+    is_command = text_body.startswith("/ask")
+    
+    # Logic to determine if we should process this message
+    should_process = False
+    
+    if is_command:
+        # It's a command: /ask <query>
+        prompt = " ".join(context.args)
+        should_process = True
+    else:
+        # It's a Mention or a Reply
+        bot_username = context.bot.username
+        
+        # Check if it's a reply to the bot
+        is_reply_to_bot = reply and reply.from_user.id == context.bot.id
+        
+        # Check if the bot is mentioned
+        is_mentioned = bot_username and f"@{bot_username}" in text_body
+        
+        if is_reply_to_bot or is_mentioned:
+            should_process = True
+            # Clean the prompt: Remove the @username
+            if bot_username:
+                prompt = text_body.replace(f"@{bot_username}", "").strip()
+            else:
+                prompt = text_body.strip()
+    
+    # If it's just a random message not directed at the bot, ignore it
+    if not should_process:
+        return
+
     image_base64 = None
     mime_type = None
     group_id = update.effective_chat.id
     
-    reply = update.message.reply_to_message
-    
     # === QUIZ SOLVING LOGIC (Priority 1) ===
     if reply and reply.poll and reply.poll.type == Poll.QUIZ:
+        # ... [KEEP YOUR EXISTING QUIZ LOGIC HERE UNCHANGED] ...
         poll_question = reply.poll.question
         poll_options = reply.poll.options
-        
-        # 1. Format options for AI
         option_list = []
         for i, option in enumerate(poll_options):
-            # Using i+1 for 1-based indexing required by the prompt
             option_list.append(f"{i+1}. {option.text}")
-
         options_text = "\n".join(option_list)
-
-        # 2. Formulate the specific AI prompt
         ai_prompt = (
             "The following is a multiple-choice quiz question. "
             "Read the question and options carefully. Based only on factual knowledge, "
@@ -388,50 +420,27 @@ async def ask_ai(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             "Do not include any other text, explanation, or punctuation."
             f"\n\nQuestion: {poll_question}\n\nOptions:\n{options_text}"
         )
-        
         await context.bot.send_chat_action(update.effective_chat.id, "typing")
-        
-        # 3. Get the response from the AI
         raw_response = await get_ai_response(ai_prompt, group_id, None, None)
-        
-        # 4. Parse the response and format output
         try:
-            # Use regex to find the first digit sequence, which should be the chosen option number
             match = re.search(r'\d+', raw_response.strip())
             if match:
-                chosen_index_str = match.group(0)
-                chosen_index = int(chosen_index_str) - 1 # Convert 1-based index to 0-based
-                
+                chosen_index = int(match.group(0)) - 1
                 if 0 <= chosen_index < len(poll_options):
                     chosen_option_text = poll_options[chosen_index].text
-                    
-                    # Use HTML for safe and consistent output
                     response_text = (
                         f"🤖 <b>Quiz Answer:</b>\n"
                         f"My best guess for the question: <b>{html.escape(poll_question)}</b> is:\n"
                         f"<b>Option {chosen_index + 1}:</b> <code>{html.escape(chosen_option_text)}</code>"
                     )
                 else:
-                    response_text = (
-                        f"🤖 I failed to select a valid option number (1-{len(poll_options)}) for the quiz.\n"
-                        f"Raw AI response: <code>{html.escape(raw_response.strip())}</code>"
-                    )
+                    response_text = f"🤖 I failed to select a valid option number."
             else:
-                 response_text = (
-                    f"🤖 I couldn't extract an option number from the AI's response.\n"
-                    f"Raw AI response: <code>{html.escape(raw_response.strip())}</code>"
-                )
-
+                 response_text = f"🤖 I couldn't extract an option number."
         except Exception as e:
-            logger.error(f"Error parsing AI quiz response: {e}. Raw response: {raw_response}")
-            response_text = (
-                f"🤖 I encountered an error while processing the AI's quiz response.\n"
-                f"Error: {html.escape(str(e))}"
-            )
-
-        # Send the final response (using HTML for consistency and safety)
+            response_text = f"🤖 Error: {html.escape(str(e))}"
         await update.message.reply_text(response_text, parse_mode="HTML")
-        return # Exit the function after answering the quiz
+        return 
     # === END QUIZ SOLVING LOGIC ===
     
     # 2. Check for reply message for both image and text context
@@ -440,7 +449,6 @@ async def ask_ai(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
         # A. Image Multimodal Handling (Photo or Image Document)
         if reply.photo:
-            # Get the largest photo size
             file_obj = reply.photo[-1] 
             mime_type = "image/jpeg" 
         elif reply.document and reply.document.mime_type and reply.document.mime_type.startswith('image/'):
@@ -449,62 +457,50 @@ async def ask_ai(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         
         if file_obj:
             try:
-                # FIX: Correctly call the async download method on the file object.
                 telegram_file = await file_obj.get_file()
-
-                # Use download_to_memory() to get file bytes
                 buffer = io.BytesIO()
                 await telegram_file.download_to_memory(out=buffer)
                 buffer.seek(0)
                 file_bytes = buffer.read()
-                
-                # 2. Encode to Base64
                 image_base64 = base64.b64encode(file_bytes).decode('utf-8')
                 
-                # 3. Determine prompt (use caption or argument)
+                # Determine prompt (use cleaned prompt from above or caption)
                 if not prompt and reply.caption:
                     prompt = reply.caption
                     
                 if not prompt:
                     prompt = "Analyze this image and provide a helpful description."
-                    
-                logger.info(f"Image prompt generated: {prompt[:50]}...")
-            
             except Exception as e:
-                logger.error(f"Error handling image download/encoding: {e}")
-                await update.message.reply_text("❌ Error processing the replied image. Make sure it's a valid photo or image file.")
+                logger.error(f"Error handling image: {e}")
+                await update.message.reply_text("❌ Error processing the replied image.")
                 return
 
-        # B. Text Context Handling (If no image was found/processed, and reply is text)
+        # B. Text Context Handling
+        # If I am replying to the BOT, the bot's message is context, and my message is the prompt.
         if not image_base64 and reply.text:
             context_text = reply.text.strip()
             
-            if not prompt and not context_text:
-                await update.message.reply_text("The replied message is empty, please provide a question.")
-                return
-            
             if not prompt and context_text:
-                # If only replying with /ask, ask AI to elaborate on the context
+                # If I just replied /ask or @Bot to a message without text
                 prompt = f"Please elaborate or expand on the following statement: '{context_text}'"
             elif prompt and context_text:
-                # If replying with /ask what is X, use the replied message as supporting context
+                # My prompt + Context of the message I replied to
                 prompt = f"Previous message context: '{context_text}'. User's question about this context: '{prompt}'"
-            
-            logger.info(f"Text context prompt generated: {prompt[:50]}...")
             
     # Fallback/Standard Prompt check
     if not prompt and not image_base64:
-        # Changed to HTML parse mode for safety
-        await update.message.reply_text(
-            "Please provide a question after the command (e.g., <code>/ask What is X?</code>) or reply to a message containing a question or image.", 
-            parse_mode="HTML"
-        )
+        # Only send usage help if it was an explicit command
+        if is_command:
+            await update.message.reply_text(
+                "Please provide a question (e.g., <code>/ask What is X?</code>) or reply to a message containing a question or image.", 
+                parse_mode="HTML"
+            )
         return
 
     # Indicate that the bot is processing the request
     await context.bot.send_chat_action(update.effective_chat.id, "typing")
     
-    # Get the response from the AI (passing the image data if available)
+    # Get the response from the AI
     response_text = await get_ai_response(prompt, group_id, image_base64, mime_type)
     
     # Send the final response
@@ -3035,6 +3031,15 @@ def main() -> None:
     application.add_handler(CommandHandler("quiz", start_quiz))
     application.add_handler(CommandHandler("stop_quiz", stop_quiz))
     application.add_handler(CommandHandler("change_timing", change_quiz_timing))
+
+    # --- NEW: Handle Mentions and Replies for AI ---
+    # Triggers ask_ai if:
+    # 1. It is NOT a command (commands are handled by CommandHandler)
+    # 2. AND (It is a Reply OR It has a Mention entity)
+    application.add_handler(MessageHandler(
+        filters.TEXT & (~filters.COMMAND) & (filters.Entity("mention") | filters.REPLY), 
+        ask_ai
+    ))
 
     # Message Handlers
      # 1. New Member Handler (Must come first to welcome the user before other filters run)
