@@ -635,6 +635,33 @@ async def get_target_user_info(update: Update, context: ContextTypes.DEFAULT_TYP
     # 3. No target found
     return None, "Please reply to a user's message, provide their Telegram User ID (e.g., `123456789`), or their username (e.g., `@username`)."
 
+
+# --- Reputation System Helper Functions ---
+
+# Assuming 'db = firestore.client()' is initialized elsewhere in your script.
+
+def update_user_reputation_sync(user_id: int, user_name: str, increment: int = 1):
+    """
+    Synchronous function to update the user's reputation in Firestore.
+    Called inside asyncio.to_thread.
+    """
+    # NOTE: user_id is converted to string for Firestore document ID convention
+    user_ref = db.collection('users').document(str(user_id))
+    
+    # firestore.Increment ensures atomic, non-blocking updates.
+    user_ref.set({
+        'user_id': user_id,
+        # Store the name to display on the leaderboard
+        'username': user_name, 
+        'reputation': firestore.Increment(increment),
+        'last_updated': firestore.SERVER_TIMESTAMP
+    }, merge=True)
+    
+    # After the update, fetch the new score to return it
+    user_doc = user_ref.get()
+    return user_doc.to_dict().get('reputation', 0)
+
+
 def get_user_ref(group_id: int, user_id: int):
     """Returns the Firestore document reference for a user in a group (for warnings)."""
     if not db:
@@ -907,6 +934,105 @@ async def bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE)
             except Exception as e:
                 logger.error(f"Failed to auto-add chat to broadcast list: {e}")
 
+
+async def handle_thanks_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles the /thanks command to give a reputation point."""
+    message = update.effective_message
+    giver_user = message.from_user
+    
+    # 1. Check if the command is a reply
+    if not message.reply_to_message:
+        await message.reply_text(
+            "👋 **Reputation Guide:**\n"
+            "To thank someone for being helpful and give them a reputation point, "
+            "**reply** to their message with the command `/thanks`.\n\n"
+            "_Note: You cannot thank yourself or the bot!_"
+        )
+        return
+
+    # 2. Identify the receiver (the person whose message was replied to)
+    receiver_message = message.reply_to_message
+    receiver_user = receiver_message.from_user
+    receiver_id = receiver_user.id
+    giver_id = giver_user.id
+
+    # 3. Validation Checks
+    if giver_id == receiver_id:
+        await message.reply_text("❌ You can't thank yourself, that's cheating! 😉")
+        return
+    
+    if receiver_user.is_bot:
+        await message.reply_text("🤖 Thanks for the kind words! But I'm just a bot, give the reputation to a human who helped you.")
+        return
+        
+    # 4. Perform the reputation update in a separate thread
+    receiver_name = receiver_user.first_name + (f" {receiver_user.last_name}" if receiver_user.last_name else "")
+    
+    try:
+        # Use asyncio.to_thread to safely run the synchronous Firestore function
+        new_rep_score = await asyncio.to_thread(
+            update_user_reputation_sync, 
+            receiver_id, 
+            receiver_name
+        )
+
+        # 5. Confirmation message
+        await message.reply_text(
+            f"🌟 **Reputation Given!** 🌟\n"
+            f"**{receiver_name}** has received a reputation point from **{giver_user.first_name}** for being helpful!\n\n"
+            f"📈 **{receiver_name}'s Current Rep Score:** `{new_rep_score}`"
+        )
+    except Exception as e:
+        logging.error(f"Error updating reputation for user {receiver_id}: {e}")
+        await message.reply_text("❌ Sorry, I hit an error trying to update the reputation score. Please try again later.")
+
+
+### **`/repleaderboard` Command**
+
+```python
+async def handle_reputation_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Shows the top 10 users by reputation."""
+    await update.effective_chat.send_chat_action(action="typing")
+    
+    try:
+        # Define the synchronous fetching logic
+        def fetch_leaderboard_sync():
+            # Fetch top 10 users by 'reputation' in descending order
+            users_ref = db.collection('users').order_by('reputation', direction=firestore.Query.DESCENDING).limit(10)
+            return list(users_ref.stream())
+
+        # Run the synchronous fetch in a separate thread
+        top_users = await asyncio.to_thread(fetch_leaderboard_sync)
+
+        leaderboard = []
+        for i, user_doc in enumerate(top_users):
+            data = user_doc.to_dict()
+            name = data.get('username', f"User ID: {data.get('user_id')}")
+            rep = data.get('reputation', 0)
+            
+            # Add an emoji based on rank
+            if i == 0:
+                rank_emoji = "🥇"
+            elif i == 1:
+                rank_emoji = "🥈"
+            elif i == 2:
+                rank_emoji = "🥉"
+            else:
+                rank_emoji = f"{i+1}."
+                
+            leaderboard.append(f"{rank_emoji} {name} — **{rep}** Rep")
+        
+        if not leaderboard:
+            text = "😔 The reputation leaderboard is empty! Start giving thanks to helpful members with `/thanks`."
+        else:
+            text = "👑 **Top 10 Reputation Leaderboard** 🏆\n\n" + "\n".join(leaderboard)
+            text += "\n\nGive reputation by replying to a helpful message with `/thanks`!"
+
+        await update.effective_message.reply_text(text, parse_mode='Markdown')
+        
+    except Exception as e:
+        logging.error(f"Error fetching leaderboard: {e}")
+        await update.effective_message.reply_text("❌ Could not fetch the leaderboard due to an error.")
 
 
 @check_frozen
@@ -2983,6 +3109,11 @@ def main() -> None:
     application.add_handler(CommandHandler("weather", weather))
     application.add_handler(CommandHandler("time", get_current_time))
     application.add_handler(CommandHandler("help", help_command))
+    # --- New Reputation System Handlers ---
+    # The command for giving reputation
+    application.add_handler(CommandHandler("thanks", handle_thanks_command))
+    # The command for showing the leaderboard
+    application.add_handler(CommandHandler("repleaderboard", handle_reputation_leaderboard))
 
     # Countdown Commands
     application.add_handler(CommandHandler("set_countdown", set_countdown))
