@@ -3309,7 +3309,7 @@ async def main() -> None:
     application.add_handler(CommandHandler("remove_warn", remove_warn))
     application.add_handler(CommandHandler("warns", warn_counts))
     application.add_handler(CommandHandler("ban", ban_user))
-    application.add_handler(CommandHandler("unban", unban)) # ID-only
+    application.add_handler(CommandHandler("unban", unban_user)) # ID-only
     application.add_handler(CommandHandler("mute", mute_user))
     application.add_handler(CommandHandler("unmute", unmute_user))
     application.add_handler(CommandHandler("promote", promote_user))
