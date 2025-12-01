@@ -989,7 +989,6 @@ async def handle_thanks_command(update: Update, context: ContextTypes.DEFAULT_TY
 
 ### **`/repleaderboard` Command**
 
-```python
 async def handle_reputation_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Shows the top 10 users by reputation."""
     await update.effective_chat.send_chat_action(action="typing")
