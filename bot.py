@@ -2488,34 +2488,61 @@ async def save_group_scores_to_db(group_id: int):
 async def local_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         group_id = update.effective_chat.id
+        await update.effective_chat.send_chat_action("typing")
 
-        def fetch_scores():
+        # 1️⃣ fetch all users that belong to this group
+        def fetch_group_users():
             return list(
                 db.collection("group_scores")
-                  .document(str(group_id))
-                  .collection("users")
-                  .order_by("score", direction=firestore.Query.DESCENDING)
-                  .limit(20)
-                  .stream()
+                .document(str(group_id))
+                .collection("users")
+                .stream()
             )
 
-        docs = await asyncio.to_thread(fetch_scores)
-        if not docs:
+        group_docs = await asyncio.to_thread(fetch_group_users)
+        if not group_docs:
             return await update.message.reply_text("No leaderboard data found yet 😕")
 
-        msg = f"🏆 *LEADERBOARD — {update.effective_chat.title}* 🏆\n\n"
-        for i, doc in enumerate(docs, start=1):
-            data = doc.to_dict()
-            name = data.get("username", "Unknown")
-            score = data.get("score", 0)
-            trophy = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            msg += f"{trophy} *{name}* — `{score}` pts\n"
+        # 2️⃣ fetch XP for each user
+        leaderboard = []
+        for doc in group_docs:
+            gdata = doc.to_dict()
+            user_id = gdata.get("user_id")
+            username = gdata.get("username", f"User {user_id}")
 
-        await update.message.reply_text(msg, parse_mode="Markdown")
+            # Get XP + league from users DB
+            def fetch_user_db():
+                return db.collection("users").document(str(user_id)).get()
+
+            user_doc = await asyncio.to_thread(fetch_user_db)
+            udata = user_doc.to_dict() if user_doc and user_doc.exists else {}
+
+            xp = udata.get("xp", 0)
+            league = udata.get("league", "rookie")
+
+            leaderboard.append({
+                "user_id": user_id,
+                "username": username,
+                "xp": xp,
+                "league": league
+            })
+
+        # 3️⃣ sort by XP descending
+        leaderboard.sort(key=lambda x: x["xp"], reverse=True)
+
+        # 4️⃣ build message
+        msg = f"🏆 <b>GROUP XP LEADERBOARD</b> 🏆\n<b>{update.effective_chat.title}</b>\n\n"
+        for i, u in enumerate(leaderboard[:20], start=1):
+            medal = "👑🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            safe_name = html.escape(u["username"])
+            msg += f"{medal} <b>{safe_name}</b> — <code>{u['xp']} XP</code> — <i>{u['league']}</i>\n"
+
+        await update.message.reply_text(msg, parse_mode="HTML")
 
     except Exception as e:
         logger.error(f"local_leaderboard error in chat {update.effective_chat.id}: {e}")
         await update.message.reply_text("⚠️ Error fetching leaderboard.")
+
 
 
 # ============================
