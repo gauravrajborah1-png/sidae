@@ -3170,6 +3170,132 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 # --- Owner Control Panel Commands ---
+# --- Owner-only: Send active countdowns to all tracked groups ---
+@owner_override
+async def send_countdown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Owner-only command: send active countdowns to all tracked chats."""
+    if not is_owner(update.effective_user.id):
+        await update.message.reply_text("This command is restricted to the bot owner.")
+        return
+
+    if not db:
+        await update.message.reply_text("Database not available.")
+        return
+
+    chats_ref = db.collection("broadcast_chats")
+
+    try:
+        chats_snapshot = await asyncio.to_thread(chats_ref.stream)
+    except Exception as e:
+        logger.error(f"[send_countdown] Failed to fetch broadcast_chats: {e}")
+        await update.message.reply_text(f"Failed to load tracked chats: {e}")
+        return
+
+    sent_count = 0
+    failed_count = 0
+    cleared_count = 0
+    now = datetime.now(timezone.utc)
+
+    for doc in chats_snapshot:
+        chat_data = doc.to_dict()
+        chat_id_str = chat_data.get("chat_id")
+        if not chat_id_str:
+            continue
+
+        # load the group's countdown settings
+        try:
+            group_ref = db.collection("group_settings").document(str(chat_id_str))
+            group_doc = await asyncio.to_thread(group_ref.get)
+            group = group_doc.to_dict() or {}
+        except Exception as e:
+            logger.warning(f"[send_countdown] Could not load settings for chat {chat_id_str}: {e}")
+            continue
+
+        target_iso = group.get("target_date_iso")
+        countdown_name = group.get("countdown_name")
+        target_human = group.get("target_date_human", "")
+
+        # If no countdown set, skip
+        if not target_iso or not countdown_name:
+            continue
+
+        # Parse and check
+        try:
+            target_dt = datetime.fromisoformat(target_iso)
+            # ensure timezone-aware in UTC for consistent comparison
+            if target_dt.tzinfo is None:
+                target_dt = target_dt.replace(tzinfo=timezone.utc)
+            else:
+                target_dt = target_dt.astimezone(timezone.utc)
+        except Exception as e:
+            logger.warning(f"[send_countdown] Invalid date for chat {chat_id_str}: {e}. Clearing countdown.")
+            # attempt to clear corrupted countdown entry
+            try:
+                await asyncio.to_thread(group_ref.update, {
+                    "countdown_name": firestore.DELETE_FIELD,
+                    "target_date_iso": firestore.DELETE_FIELD,
+                    "target_date_human": firestore.DELETE_FIELD
+                })
+                cleared_count += 1
+            except:
+                pass
+            continue
+
+        remaining = target_dt - now
+
+        # If expired or due, clear and optionally notify (we'll clear and skip sending)
+        if remaining.total_seconds() <= 0:
+            try:
+                await asyncio.to_thread(group_ref.update, {
+                    "countdown_name": firestore.DELETE_FIELD,
+                    "target_date_iso": firestore.DELETE_FIELD,
+                    "target_date_human": firestore.DELETE_FIELD
+                })
+                cleared_count += 1
+                logger.info(f"[send_countdown] Cleared expired countdown for chat {chat_id_str}")
+            except Exception as e:
+                logger.warning(f"[send_countdown] Failed to clear expired countdown for {chat_id_str}: {e}")
+            continue
+
+        # Format remaining time
+        days = remaining.days
+        hours = remaining.seconds // 3600
+        minutes = (remaining.seconds % 3600) // 60
+        seconds = remaining.seconds % 60
+
+        # Compose message
+        msg = (
+            f"⏳ **{countdown_name}**\n"
+            f"Target: `{target_human}`\n\n"
+            f"**Time Remaining:**\n"
+            f"• `{days}` days\n"
+            f"• `{hours}` hours\n"
+            f"• `{minutes}` minutes\n"
+            f"• `{seconds}` seconds"
+        )
+
+        # send to the chat (chat_id stored as string so convert)
+        try:
+            await context.bot.send_message(chat_id=int(chat_id_str), text=msg, parse_mode="Markdown")
+            sent_count += 1
+        except Exception as e:
+            logger.warning(f"[send_countdown] Failed to send countdown to {chat_id_str}: {e}")
+            failed_count += 1
+            # optionally: if bot was removed from chat, you could delete chat from broadcast_chats here
+
+    # ----- final summary to owner (ALWAYS DM to owner) -----
+    owner_id = OWNER_ID   # same int variable used everywhere
+    summary = (
+        f"📊 *Countdown Report*\n\n"
+        f"✔️ Sent: {sent_count}\n"
+        f"❌ Failed: {failed_count}\n"
+        f"🧹 Cleared expired/invalid: {cleared_count}\n"
+    )
+
+    try:
+        await context.bot.send_message(chat_id=owner_id, text=summary, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"[send_countdown] Failed to send summary to owner: {e}")
 
 @owner_override
 async def freeze_bot(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
