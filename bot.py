@@ -2433,31 +2433,58 @@ async def reward_top_three(group_id: int, bot, chat_id: int = None):
     except Exception as e:
         logger.error(f"reward_top_three error for {group_id}: {e}")
 
+async def save_group_scores_to_db(group_id: int):
+    session = quiz_sessions.get(group_id)
+    if not session or not session.get("scores"):
+        return
+
+    batch = db.batch()
+    group_users_ref = db.collection("group_scores").document(str(group_id)).collection("users")
+
+    for user_id, stats in session["scores"].items():
+        doc = group_users_ref.document(str(user_id))
+        batch.set(doc, {
+            "user_id": user_id,
+            "username": stats.get("name", f"User {user_id}"),
+            "score": stats.get("score", 0)
+        }, merge=True)
+
+    await asyncio.to_thread(batch.commit)
+
+
 @check_frozen
 async def local_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
-        chat = update.effective_chat
-        group_id = chat.id
+        group_id = update.effective_chat.id
 
-        session = quiz_sessions.get(group_id)
-        if not session or not session.get("scores"):
-            return await update.message.reply_text("😕 No quiz data found for this group yet.")
+        def fetch_scores():
+            return list(
+                db.collection("group_scores")
+                  .document(str(group_id))
+                  .collection("users")
+                  .order_by("score", direction=firestore.Query.DESCENDING)
+                  .limit(20)
+                  .stream()
+            )
 
-        scores = session["scores"]
-        sorted_players = sorted(
-            scores.items(),
-            key=lambda x: (-x[1].get("score", 0), x[1].get("time", float("inf")))
-        )
+        docs = await asyncio.to_thread(fetch_scores)
+        if not docs:
+            return await update.message.reply_text("No leaderboard data found yet 😕")
 
-        msg = f"🏆 *Leaderboard — {chat.title or 'This Group'}* 🏆\n\n"
-        for i, (user_id, stats) in enumerate(sorted_players[:10], start=1):
+        msg = f"🏆 *LEADERBOARD — {update.effective_chat.title}* 🏆\n\n"
+        for i, doc in enumerate(docs, start=1):
+            data = doc.to_dict()
+            name = data.get("username", "Unknown")
+            score = data.get("score", 0)
             trophy = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
-            msg += f"{trophy} *{stats['name']}* — `{stats['score']}` pts\n"
+            msg += f"{trophy} *{name}* — `{score}` pts\n"
 
         await update.message.reply_text(msg, parse_mode="Markdown")
+
     except Exception as e:
         logger.error(f"local_leaderboard error in chat {update.effective_chat.id}: {e}")
-        await update.message.reply_text("⚠️ Error fetching local leaderboard. Please try again later.")
+        await update.message.reply_text("⚠️ Error fetching leaderboard.")
+
 
 # ============================
 # 🌍 GLOBAL XP LEADERBOARD
@@ -3000,6 +3027,7 @@ async def run_quiz_background(group_id: int, file_id: str, chapter_name: str, nu
             
             await context.bot.send_message(chat_id=group_id, text=text, parse_mode="HTML")
             await reward_top_three(group_id, context.bot, chat_id=group_id)
+            await save_group_scores_to_db(group_id)       # ⭐ permanent storage
 
 
         # Cleanup
