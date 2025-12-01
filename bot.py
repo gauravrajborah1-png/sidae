@@ -2382,6 +2382,38 @@ async def help_command(update: Update, context: CallbackContext):
     )
     await update.message.reply_text(message)
 
+# ============================
+# 🌟 QUIZ REWARDING SYSTEM
+# ============================
+
+# XP points for ranking
+RANK_REWARD = {1: 120, 2: 90, 3: 60}
+
+# League requirements (XP thresholds)
+LEAGUES = [
+    ("Bronze", 0),
+    ("Silver", 500),
+    ("Gold", 1200),
+    ("Platinum", 2500),
+    ("Diamond", 5000),
+    ("Legendary", 9000),
+]
+
+
+async def update_league_if_needed(user_id: int) -> str:
+    """Check league by XP and update if promotion happens."""
+    ref = db.collection("users").document(str(user_id))
+    doc = await asyncio.to_thread(ref.get)
+    xp = doc.to_dict().get("xp", 0)
+
+    new_league = "Bronze"
+    for league, threshold in LEAGUES:
+        if xp >= threshold:
+            new_league = league
+
+    # If new league change required → update
+    await asyncio.to_thread(ref.set, {"league": new_league}, merge=True)
+    return new_league
 
 
 # ============================
