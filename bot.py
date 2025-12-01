@@ -8,6 +8,7 @@ import io
 import base64 
 import html
 import aiohttp
+from aiohttp import web
 from telegram import Update, ChatPermissions, Poll
 from telegram.ext import (
     Application, CommandHandler, MessageHandler, filters, ContextTypes, CallbackContext, PollHandler, PollAnswerHandler, ChatMemberHandler
@@ -3261,7 +3262,7 @@ async def list_chats(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 # --- Main Application Setup ---
 
-def main() -> None:
+async def main() -> None:
     """Starts the bot using Webhook (required for free hosting)."""
     if not BOT_TOKEN or not WEBHOOK_URL:
         logger.error("BOT_TOKEN or WEBHOOK_URL environment variables are not set. Exiting.")
@@ -3288,12 +3289,11 @@ def main() -> None:
     # --- New Reputation System Handlers ---
     # The command for giving reputation
     application.add_handler(CommandHandler("thanks", handle_thanks_command))
-    # The command for showing the leaderboard
+    # The command for showing the leaderboards
     application.add_handler(CommandHandler("repleaderboard", handle_reputation_leaderboard))
     application.add_handler(CommandHandler("leaderboard", local_leaderboard))
     application.add_handler(CommandHandler("global_leaderboard", global_leaderboard))
     application.add_handler(CommandHandler("profile", profile))
-
 
 
     # Countdown Commands
@@ -3309,7 +3309,7 @@ def main() -> None:
     application.add_handler(CommandHandler("remove_warn", remove_warn))
     application.add_handler(CommandHandler("warns", warn_counts))
     application.add_handler(CommandHandler("ban", ban_user))
-    application.add_handler(CommandHandler("unban", unban_user)) # ID-only
+    application.add_handler(CommandHandler("unban", unban)) # ID-only
     application.add_handler(CommandHandler("mute", mute_user))
     application.add_handler(CommandHandler("unmute", unmute_user))
     application.add_handler(CommandHandler("promote", promote_user))
@@ -3337,6 +3337,7 @@ def main() -> None:
     application.add_handler(CommandHandler("freeze_bot", freeze_bot))
     application.add_handler(CommandHandler("resume_bot", resume_bot))
     application.add_handler(CommandHandler("list_chats", list_chats))
+    application.add_handler(CommandHandler("send_countdown", send_countdown))
 
     # NCERT Quiz Feature
     application.add_handler(CommandHandler("save_chapter", save_chapter))
@@ -3369,6 +3370,7 @@ def main() -> None:
         group=10
     )
 
+    # 5. Handle Unapproved Links (Delete and Warn for Message Links)
     application.add_handler(MessageHandler(filters.Entity("url") | filters.Entity("text_link"), handle_link_messages))
 
     # 3. Handle Filters (Text, Sticker, Image Trigger by Keyword)
@@ -3377,7 +3379,6 @@ def main() -> None:
     # 4. Handle Banned Words (Delete and Warn for Text)
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_banned_words))
 
-    # 5. Handle Unapproved Links (Delete and Warn for Message Links)
     
 
     # 6. Poll Answer Handler (Quiz responses)
@@ -3399,14 +3400,36 @@ def main() -> None:
         Update.CALLBACK_QUERY
     ]
 
-    # Run the bot as a webhook server
-    application.run_webhook(
-        listen="0.0.0.0",
-        port=PORT,
-        url_path=BOT_TOKEN,
-        webhook_url=f"{WEBHOOK_URL}/{BOT_TOKEN}",
-        allowed_updates=allowed_updates_list 
-    )
+    # --- Telegram webhook handler ---
+    async def telegram_webhook(request):
+        update = Update.de_json(await request.json(), application.bot)
+        await application.initialize()
+        await application.process_update(update)
+        return web.Response(text="OK")
+
+    # --- Health check endpoint (for Render + UptimeRobot) ---
+    async def home(request):
+        return web.Response(text="Bot is running...")
+
+    # --- aiohttp web app ---
+    app = web.Application()
+    app.router.add_post(f"/{BOT_TOKEN}", telegram_webhook)
+    app.router.add_get("/", home)
+
+    # start the Telegram webhook
+    await application.bot.set_webhook(f"{WEBHOOK_URL}/{BOT_TOKEN}")
+
+    # run aiohttp server
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", PORT)
+    await site.start()
+
+    print("Bot and Web server running...")
+
+    # keep alive
+    await asyncio.Event().wait()
+
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
