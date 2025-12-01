@@ -2384,6 +2384,181 @@ async def help_command(update: Update, context: CallbackContext):
 
 
 
+# ============================
+# 🌟 FINAL STABLE REWARD FUNCTION
+# ============================
+async def reward_top_three(group_id: int, bot, chat_id: int = None):
+    """
+    Works from BOTH handlers and background tasks.
+    Does NOT require update/context.
+    """
+    try:
+        session = quiz_sessions.get(group_id)
+        if not session or not session.get("scores"):
+            return
+
+        scores = session["scores"]
+        sorted_players = sorted(
+            scores.items(),
+            key=lambda x: (-x[1].get("score", 0), x[1].get("time", float("inf")))
+        )
+
+
+        lines = []
+        lines.append("🏆 *QUIZ REWARD TIME!* 🏆")
+        lines.append("Top 3 performers are awarded XP 🔥\n")
+
+        for rank, (user_id, stats) in enumerate(sorted_players[:3], start=1):
+            reward = RANK_REWARD.get(rank, 0)
+
+            # update XP
+            user_ref = db.collection("users").document(str(user_id))
+            await asyncio.to_thread(user_ref.set, {
+                "user_id": user_id,
+                "username": stats.get("name", f"User {user_id}"),
+                "xp": firestore.Increment(reward)
+            }, merge=True)
+
+            # league update
+            new_league = await update_league_if_needed(user_id)
+
+            medal = "🥇" if rank == 1 else "🥈" if rank == 2 else "🥉"
+            lines.append(f"{medal} Rank {rank}: *{stats['name']}* → +{reward} XP → _{new_league}_")
+
+        msg = "\n".join(lines)
+
+        final_chat = chat_id if chat_id else group_id
+        await bot.send_message(chat_id=final_chat, text=msg, parse_mode="Markdown")
+
+    except Exception as e:
+        logger.error(f"reward_top_three error for {group_id}: {e}")
+
+@check_frozen
+async def local_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        chat = update.effective_chat
+        group_id = chat.id
+
+        session = quiz_sessions.get(group_id)
+        if not session or not session.get("scores"):
+            return await update.message.reply_text("😕 No quiz data found for this group yet.")
+
+        scores = session["scores"]
+        sorted_players = sorted(
+            scores.items(),
+            key=lambda x: (-x[1].get("score", 0), x[1].get("time", float("inf")))
+        )
+
+        msg = f"🏆 *Leaderboard — {chat.title or 'This Group'}* 🏆\n\n"
+        for i, (user_id, stats) in enumerate(sorted_players[:10], start=1):
+            trophy = "🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            msg += f"{trophy} *{stats['name']}* — `{stats['score']}` pts\n"
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        logger.error(f"local_leaderboard error in chat {update.effective_chat.id}: {e}")
+        await update.message.reply_text("⚠️ Error fetching local leaderboard. Please try again later.")
+
+# ============================
+# 🌍 GLOBAL XP LEADERBOARD
+# ============================
+
+@check_frozen
+async def global_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_chat.send_chat_action(action="typing")
+
+    try:
+        def fetch_global():
+            return list(
+                db.collection("users")
+                  .order_by("xp", direction=firestore.Query.DESCENDING)
+                  .limit(20)
+                  .stream()
+            )
+
+        users = await asyncio.to_thread(fetch_global)
+        if not users:
+            return await update.message.reply_text("No XP data found yet 😔")
+
+        msg = "🌍 **GLOBAL XP LEADERBOARD** 🏆\n\n"
+        for i, doc in enumerate(users, start=1):
+            data = doc.to_dict()
+            name = data.get("username") or f"User {data.get('user_id')}"
+            xp = data.get("xp", 0)
+            league = data.get("league", "Bronze")
+
+            medal = "👑🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
+            msg += f"{medal} **{name}** — `{xp} XP` — _{league}_\n"
+
+        await update.message.reply_text(msg, parse_mode="Markdown")
+    except Exception as e:
+        print(e)
+        await update.message.reply_text("⚠ Error fetching global leaderboard.")
+
+# =====================================
+# 🔥 USER PROFILE COMMAND
+# =====================================
+
+@check_frozen
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    user_id = user.id
+    chat = update.effective_chat
+    group_id = chat.id
+
+    await update.effective_chat.send_chat_action(action="typing")
+
+    try:
+        # 📌 Fetch XP, League, Reputation
+        def fetch_user_data():
+            doc = db.collection("users").document(str(user_id)).get()
+            return doc.to_dict() if doc.exists else {}
+
+        user_data = await asyncio.to_thread(fetch_user_data)
+
+        xp = user_data.get("xp", 0)
+        league = user_data.get("league", "Bronze")
+        rep = user_data.get("reputation", 0)
+
+        # 📌 Global Rank Calculation
+        def fetch_rank():
+            users = list(db.collection("users")
+                .order_by("xp", direction=firestore.Query.DESCENDING)
+                .stream())
+            ids_sorted = [u.id for u in users]
+            for index, doc in enumerate(users):
+                if doc.id == str(user_id):
+                    return index + 1, len(users)
+            return None, len(users)
+
+        rank, total_users = await asyncio.to_thread(fetch_rank)
+
+        # 📌 Group Warning Count
+        async def get_group_warns():
+            ref = db.collection("groups").document(str(group_id)).collection("users").document(str(user_id))
+            doc = await asyncio.to_thread(ref.get)
+            return doc.to_dict().get("warnings", 0) if doc.exists else 0
+
+        warn_count = await get_group_warns()
+
+        # 📌 Message Building
+        profile_msg = (
+            f"👤 **PROFILE CARD**\n\n"
+            f"🪪 **Name:** {user.full_name}\n"
+            f"🆔 **User ID:** `{user_id}`\n\n"
+            f"💠 **League:** `{league}`\n"
+            f"⚡ **XP:** `{xp}`\n"
+            f"🌍 **Global Rank:** `{rank}/{total_users}`\n"
+            f"💎 **Reputation:** `{rep}`\n"
+            f"⚠ **Warnings in this group:** `{warn_count}`\n"
+        )
+
+        await update.message.reply_text(profile_msg, parse_mode="Markdown")
+
+    except Exception as e:
+        print(e)
+        await update.message.reply_text("⚠ Unable to fetch profile. Please try again later.")
+
 # --- NCERT Quiz Feature (New) ---
 
 async def extract_text_from_pdf(file_bytes: bytes) -> str:
@@ -2824,6 +2999,8 @@ async def run_quiz_background(group_id: int, file_id: str, chapter_name: str, nu
                 text += f"{rank}. <b>{safe_name}</b> — {score} pts ({time_taken:.1f}s)\n"
             
             await context.bot.send_message(chat_id=group_id, text=text, parse_mode="HTML")
+            await reward_top_three(group_id, context.bot, chat_id=group_id)
+
 
         # Cleanup
         context.application.create_task(cleanup_quiz_data(group_id))
@@ -3114,6 +3291,11 @@ def main() -> None:
     application.add_handler(CommandHandler("thanks", handle_thanks_command))
     # The command for showing the leaderboard
     application.add_handler(CommandHandler("repleaderboard", handle_reputation_leaderboard))
+    application.add_handler(CommandHandler("leaderboard", local_leaderboard))
+    application.add_handler(CommandHandler("global_leaderboard", global_leaderboard))
+    application.add_handler(CommandHandler("profile", profile))
+
+
 
     # Countdown Commands
     application.add_handler(CommandHandler("set_countdown", set_countdown))
