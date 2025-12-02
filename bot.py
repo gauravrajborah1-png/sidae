@@ -268,7 +268,7 @@ async def get_ai_response(prompt: str, group_id: int, image_base64: str = None, 
         
         # Base System instruction to guide the Gemini model's behavior (UNCHANGED)
         system_instruction_text_base = (
-            r"You are a helpful, Telegram bot to help in study related doubts running inside a group chat or in a private chat. You are created by Saniya🐣, she is your owner. The telegram username of your owner is @Niyafirdaus07. Your telegram username is @Chhoti_don_bot. You are here for chit-chat with users. Try to write text normally because telegram can't understand markdown formatting. Use some emojis in case if you need to provide special emphasis on a part of text. Be very careful about not giving the user about any medical, financial or family related adivce. Don't give the user anything illegal. Whenever someone asks you anything in hindi, then don't reply using hindi letters. Instead use hinglish. Write hindi words in english. Don't give any idea about your language model to the user and don't give them any codes for making a bot like you. Don't give them your API key. Don't give reply to any sexually abusive things or slang words rather than their biology related doubts. At last don't forget your identity; your name is 𝐓𝐢𝐧𝐤𝐞𝐫𝐁𝐞𝐥𝐥࣪. You don't have to mention your name or  the name of your owner everytime. Just mention it whenever they ask you about your identity; like- who are you? or who is your owner or creator. Just mention the name of your owner in introduction. Also you don't have to write your knowledge base in every message. Just write them when they ask you. You can help users by translating something off-topic  that they don't understand.  Make the message understandable and readable by the users. Always write math in plain text, not LaTeX. Do not use $ or \frac or \mu or any TeX formatting."
+            r"You are a helpful, Telegram bot to help in study related doubts running inside a group chat or in a private chat. You are created by Saniya🐣, she is your owner. Your telegram username is @Chhoti_don_bot. You are here for chit-chat with users. Try to write text normally because telegram can't understand markdown formatting. Use some emojis in case if you need to provide special emphasis on a part of text. Be very careful about not giving the user about any medical, financial or family related adivce. Don't give the user anything illegal. Whenever someone asks you anything in hindi, then don't reply using hindi letters. Instead use hinglish. Write hindi words in english. Don't give any idea about your language model to the user and don't give them any codes for making a bot like you. Don't give them your API key. Don't give reply to any sexually abusive things or slang words rather than their biology related doubts. At last don't forget your identity; your name is Sîdæ. You don't have to mention your name or the name of your owner everytime. Just mention it whenever they ask you about your identity; like- who are you? or who is your owner or creator. Just mention the name of your owner in introduction. Also you don't have to write your knowledge base in every message. Just write them when they ask you. You can help users by translating something off-topic  that they don't understand.  Make the message understandable and readable by the users. Always write math in plain text, not LaTeX. Do not use $ or \frac or \mu or any TeX formatting."
             "If an image is provided, focus your analysis on that image and the user's question about it. "
         )
         
@@ -875,9 +875,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Sends a welcome message with bot information and tracks the chat for broadcasting."""
     # Start command text (UNCHANGED)
     await update.message.reply_text(
-        "👋 This is a group moderation bot made with ♥ by @Niyafirdaus07 (Saniya urf Choti don)\n"
-        "You can contact the owner through this bot. You can also manage a group or ask any study related doubts using this bot. Just give it the admin rights and you're good to go🐥—"
-        "\n\nThank you🦚"
+        "Hey! I'm Sîdæ { your fev Anya Chan } . I am a group management bot made by saniya {urf chhoti don } , here to help you get around and keep the order in your groups!\n"
+        "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more...\n" 
+
+        "Helpful commands:\n"
+        "- /start: Starts me! You've probably already used this.\n"
+        "- /help: Sends this message; I'll tell you more about myself!\n"
+
+        "All commands can be used with the following: / !"
+        "\n\nthank you 🌷"
     )
 
     # --- Track chat for broadcast functionality in the global 'broadcast_chats' collection ---
@@ -913,9 +919,15 @@ async def bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(
             chat_id=chat.id,
             text=(
-                "👋 This is a group moderation bot made with ♥ by @Niyafirdaus07 (Saniya urf Choti don)\n"
-                "You can contact the owner through this bot. You can also manage a group or ask any study related doubts using this bot. "
-                "Just give it the admin rights and you're good to go🐥—\n\nThank you🦚"
+                "Hey! I'm Sîdæ { your fev Anya Chan } . I am a group management bot made by saniya {urf chhoti don } , here to help you get around and keep the order in your groups!\n"
+                "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more...\n" 
+
+                "Helpful commands:\n"
+                "- /start: Starts me! You've probably already used this.\n"
+                "- /help: Sends this message; I'll tell you more about myself!\n"
+
+                "All commands can be used with the following: / !"
+                "\n\nthank you 🌷"
             )
         )
 
@@ -2378,7 +2390,7 @@ async def help_command(update: Update, context: CallbackContext):
         "/save_chapter <chapter_name> - koi v pdf(small size) ko reply kro is command ke sath(chapter ka nam command ke baad likh dena) and then us pdf se quiz krte rho...❄🪄\n"
         "/stop_quiz - stops an ongoing quiz taaki aap jaake apne gf/bf ka msg padh paao🙂\n\n\n"
         "Thank you🕊\n"
-        "regards- Choti don🐣"
+        "regards- Chhoti don🐣"
     )
     await update.message.reply_text(message)
 
