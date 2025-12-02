@@ -875,15 +875,15 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     """Sends a welcome message with bot information and tracks the chat for broadcasting."""
     # Start command text (UNCHANGED)
     await update.message.reply_text(
-        "Hey! I'm Sîdæ { your fev Anya Chan } . I am a group management bot made by saniya {urf chhoti don } , here to help you get around and keep the order in your groups!\n"
-        "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more...\n" 
+        "Hey! I'm Sîdæ { your fev Anya Chan }😊 . I am a group management bot made by saniya {urf chhoti don}🌸 , here to help you get around and keep the order in your groups!\n"
+        "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more⚡💫...\n\n" 
 
-        "Helpful commands:\n"
+        "𝙃𝙚𝙡𝙥𝙛𝙪𝙡 𝙘𝙤𝙢𝙢𝙖𝙣𝙙𝙨:\n"
         "- /start: Starts me! You've probably already used this.\n"
         "- /help: Sends this message; I'll tell you more about myself!\n"
 
         "All commands can be used with the following: / !"
-        "\n\nthank you 🌷"
+        "\n\n𝙏𝙝𝙖𝙣𝙠 𝙮𝙤𝙪 🌷"
     )
 
     # --- Track chat for broadcast functionality in the global 'broadcast_chats' collection ---
@@ -919,15 +919,15 @@ async def bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await context.bot.send_message(
             chat_id=chat.id,
             text=(
-                "Hey! I'm Sîdæ { your fev Anya Chan } . I am a group management bot made by saniya {urf chhoti don } , here to help you get around and keep the order in your groups!\n"
-                "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more...\n" 
+                "Hey! I'm Sîdæ { your fev Anya Chan }😊. I am a group management bot made by saniya {urf chhoti don}🌸 , here to help you get around and keep the order in your groups!\n"
+                "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more⚡💫...\n\n" 
 
-                "Helpful commands:\n"
+                "𝙃𝙚𝙡𝙥𝙛𝙪𝙡 𝙘𝙤𝙢𝙢𝙖𝙣𝙙𝙨:\n"
                 "- /start: Starts me! You've probably already used this.\n"
                 "- /help: Sends this message; I'll tell you more about myself!\n"
 
                 "All commands can be used with the following: / !"
-                "\n\nthank you 🌷"
+                "\n\n𝙏𝙝𝙖𝙣𝙠 𝙮𝙤𝙪 🌷"
             )
         )
 
