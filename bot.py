@@ -2715,12 +2715,12 @@ async def stop_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def run_autonomous_quiz(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     while autonomous_running.get(chat_id, False):
 
-        # Get chapters from Firestore
-        chapters_ref = db.collection("groups").document(str(chat_id)).collection("chapters")
+        # READ CHAPTERS FROM ncert_chapters COLLECTION
+        chapters_ref = db.collection("ncert_chapters")
         chapter_docs = await asyncio.to_thread(lambda: list(chapters_ref.stream()))
 
         if not chapter_docs:
-            await context.bot.send_message(chat_id, "⚠ No chapters found in Firestore.")
+            await context.bot.send_message(chat_id, "⚠ No NCERT chapters found in Firestore.")
             autonomous_running[chat_id] = False
             return
 
@@ -2730,28 +2730,33 @@ async def run_autonomous_quiz(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
 
             chapter = chapter_doc.id
             data = chapter_doc.to_dict()
-            pdf_url = data.get("pdf_url") if data else None
 
-            if not pdf_url:
-                await context.bot.send_message(chat_id, f"⚠ PDF missing for chapter: {chapter}. Skipping...")
+            # extract pdf file id
+            file_id = data.get("file_id")
+            if not file_id:
+                await context.bot.send_message(chat_id, f"⚠ No file found for chapter: {chapter}. Skipping...")
                 continue
 
-            num_q = auto_question_count.get(chat_id, 10)  # default 10 unless user set
+            # number of questions set by user (fallback = 10)
+            num_q = auto_question_count.get(chat_id, 10)
+
             await context.bot.send_message(chat_id, f"📘 Starting quiz from **{chapter}**")
 
             try:
-                # Your normal quiz start function
-                await start_quiz_internal(chat_id, context, chapter, num_q, pdf_url)
+                # call your normal quiz system
+                await start_quiz_internal(chat_id, context, chapter, num_q, file_id)
+                # ⚠ NOTE: start_quiz_internal() must accept file_id instead of pdf_url
+                # If your function still expects pdf_url, tell me — I will convert file_id → file_url properly.
 
             except Exception as e:
-                await context.bot.send_message(chat_id, f"❌ Error in quiz for {chapter}: {e}")
+                await context.bot.send_message(chat_id, f"❌ Error during quiz for {chapter}: {e}")
                 continue
 
-            # After quiz ends, leaderboard & XP already handled inside quiz engine
-            await context.bot.send_message(chat_id, "😴 Resting for 2 minutes before next chapter...")
+            # after leaderboard and XP inside quiz system
+            await context.bot.send_message(chat_id, "😴 Resting 2 minutes before next chapter...")
             await asyncio.sleep(120)
 
-        # After last chapter → start again from beginning
+        # after last chapter → start again automatically
 
 
 # --- NCERT Quiz Feature (New) ---
