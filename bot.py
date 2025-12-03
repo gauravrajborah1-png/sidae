@@ -2994,27 +2994,55 @@ async def run_quiz_background(group_id: int, file_id: str, chapter_name: str, nu
                 logger.info(f"Quiz {group_id} detected external stop signal. Exiting loop.")
                 break # <--- EXIT THE LOOP IMMEDIATELY
             try:
-                # Create Poll
-                options = [opt[:100] for opt in q.get('options', [])]
-                question_text = f"Q{i+1}: {q.get('question')}"
+                # --- NEW LOGIC START ---
                 
-                if len(question_text) > 300:
-                    await context.bot.send_message(chat_id=group_id, text=question_text)
-                    question_text = f"Q{i+1} (See above)"
+                # 1. Prepare Question Text with Options
+                raw_options = q.get('options', [])
+                
+                # Build the text message: Question + Numbered Options
+                # We use html.escape to safely handle special characters (<, >, &)
+                question_text_msg = f"<b>Q{i+1}: {html.escape(q.get('question', ''))}</b>\n\n"
+                
+                for idx, opt in enumerate(raw_options):
+                    question_text_msg += f"<b>{idx + 1}.</b> {html.escape(str(opt))}\n"
+
+                # 2. Send the Text Message First
+                try:
+                    await context.bot.send_message(
+                        chat_id=group_id,
+                        text=question_text_msg,
+                        parse_mode='HTML'
+                    )
+                except Exception as e:
+                    logger.error(f"Error sending question text HTML: {e}")
+                    # Fallback: send without HTML if parsing fails
+                    clean_text = question_text_msg.replace('<b>', '').replace('</b>', '')
+                    await context.bot.send_message(chat_id=group_id, text=clean_text)
+
+                # 3. Prepare Numeric Options for the Poll
+                # If there are 4 options, this creates ['1', '2', '3', '4']
+                numeric_options = [str(idx + 1) for idx in range(len(raw_options))]
+
+                # 4. Send the Poll (Numeric)
+                # Ensure explanation fits limit (200 chars)
+                expl = q.get('explanation', "No explanation.")
+                safe_explanation = expl[:200] if expl else "No explanation."
 
                 poll_message = await context.bot.send_poll(
                     chat_id=group_id,
-                    question=question_text,
-                    options=options,
+                    question="Quiz by @Chhoti_don_bot 🕊",  # Your Branding Placeholder
+                    options=numeric_options,              # Only numbers: ['1', '2', '3', '4']
                     type=Poll.QUIZ,
                     correct_option_id=q.get('correct_option_id', 0),
-                    explanation=q.get('explanation', "No explanation."),
+                    explanation=safe_explanation,
                     explanation_parse_mode="Markdown",
                     is_anonymous=False, 
                     open_period=interval
                 )
+                
+                # --- NEW LOGIC END ---
 
-                # Register Poll
+                # Register Poll (Existing logic kept exactly the same)
                 poll_key = str(poll_message.poll.id)
                 poll_data = {
                     'chat_id': group_id,
