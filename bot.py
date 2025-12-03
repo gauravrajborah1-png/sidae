@@ -17,7 +17,7 @@ from datetime import datetime, timedelta, timezone
 # Import firestore package directly for SERVER_TIMESTAMP
 from firebase_admin import initialize_app, firestore, credentials 
 import functools
-
+import random
 # Try to import pypdf for PDF text extraction
 try:
     import pypdf
@@ -43,6 +43,9 @@ quiz_sessions = {}
 
 # Maps poll_id -> { 'chat_id': int, 'correct_option': int, 'start_time': datetime }
 active_polls = {}
+
+# Maps group_id -> asyncio.Task (The background supervisor task)
+autonomous_tasks = {}
 
 # Gemini Configuration (Updated for Gemini 2.5 Flash)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # Use this environment variable now
@@ -3210,7 +3213,190 @@ async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     await update.message.reply_text(leaderboard, parse_mode="Markdown")
 
+async def get_all_chapters_from_db() -> list:
+    """Fetches all chapter data from Firestore."""
+    if not db: return []
+    try:
+        # Stream all documents in ncert_chapters
+        docs = await asyncio.to_thread(db.collection("ncert_chapters").stream)
+        chapters = []
+        for doc in docs:
+            data = doc.to_dict()
+            # We need the document ID (chapter name) and file_id
+            data['chapter_name'] = doc.id 
+            if 'file_id' in data:
+                chapters.append(data)
+        return chapters
+    except Exception as e:
+        logger.error(f"Error fetching chapters: {e}")
+        return []
 
+async def autonomous_quiz_worker(group_id: int, context: ContextTypes.DEFAULT_TYPE):
+    """
+    The Supervisor Task:
+    1. Fetches chapters.
+    2. Runs a quiz.
+    3. Waits for it to finish.
+    4. Rests for 2 minutes.
+    5. Repeats with the next chapter.
+    """
+    logger.info(f"Starting autonomous loop for {group_id}")
+    
+    # 1. Fetch Chapters once (or you can fetch inside loop if you want updates)
+    chapters = await get_all_chapters_from_db()
+    
+    if not chapters:
+        await context.bot.send_message(group_id, "⚠️ No chapters found in database to start autonomous mode.")
+        autonomous_tasks.pop(group_id, None)
+        return
+
+    chapter_index = 0
+    
+    try:
+        while True:
+            # Check if stopped externally
+            if group_id not in autonomous_tasks:
+                break
+
+            # 2. Get Settings (Number of Questions)
+            # Default is 10, or check group_settings if customized
+            num_questions = 10
+            try:
+                settings_doc = await asyncio.to_thread(db.collection("group_settings").document(str(group_id)).get)
+                if settings_doc.exists:
+                    num_questions = settings_doc.to_dict().get("auto_quiz_questions", 10)
+            except:
+                pass
+
+            # 3. Select Chapter (Round Robin)
+            current_chapter = chapters[chapter_index % len(chapters)]
+            c_name = current_chapter['chapter_name']
+            f_id = current_chapter['file_id']
+
+            # 4. Notify & Start Quiz
+            await context.bot.send_message(
+                group_id, 
+                f"♾️ **Autonomous Mode Active**\nStarting next chapter: `{c_name.replace('_', ' ').title()}`", 
+                parse_mode="Markdown"
+            )
+
+            # Initialize session for the quiz
+            quiz_sessions[group_id] = {'scores': {}, 'poll_ids': [], 'is_active': True}
+            await _save_quiz_session_to_db(group_id, quiz_sessions[group_id])
+
+            # RUN THE QUIZ and AWAIT its completion
+            # We call run_quiz_background directly. Since it is an async function, 
+            # await will block this loop until the quiz (questions -> leaderboard) is done.
+            await run_quiz_background(group_id, f_id, c_name, num_questions, context)
+
+            # 5. The "Rest" Period
+            # Check if we should still continue (in case user stopped it during the quiz)
+            if group_id not in autonomous_tasks:
+                break
+                
+            rest_minutes = 2
+            await context.bot.send_message(
+                group_id, 
+                f"☕ **Break Time!**\nTaking a {rest_minutes} minute rest before the next chapter...", 
+                parse_mode="Markdown"
+            )
+            
+            # Wait for 2 minutes (120 seconds)
+            await asyncio.sleep(rest_minutes * 60)
+
+            # Increment index for next chapter
+            chapter_index += 1
+
+    except asyncio.CancelledError:
+        logger.info(f"Autonomous task cancelled for {group_id}")
+    except Exception as e:
+        logger.error(f"Autonomous worker crashed for {group_id}: {e}")
+        await context.bot.send_message(group_id, "⚠️ Autonomous mode stopped due to an error.")
+    finally:
+        # Cleanup key if loop exits
+        autonomous_tasks.pop(group_id, None)
+
+@check_frozen
+async def set_auto_questions(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Sets the number of questions for autonomous quizzes."""
+    if not await check_admin(update, context): return
+    if not db: return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("Usage: `/set_auto_questions <number>` (e.g., 15)", parse_mode="Markdown")
+        return
+
+    count = int(context.args[0])
+    if count < 5 or count > 50:
+        await update.message.reply_text("Please set a number between 5 and 50.")
+        return
+
+    group_id = update.effective_chat.id
+    try:
+        ref = db.collection("group_settings").document(str(group_id))
+        await asyncio.to_thread(ref.set, {"auto_quiz_questions": count}, merge=True)
+        await update.message.reply_text(f"✅ Autonomous quizzes will now have **{count}** questions.", parse_mode="Markdown")
+    except Exception as e:
+        await update.message.reply_text(f"Error: {e}")
+
+@check_frozen
+async def start_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Starts the 24/7 autonomous quiz loop."""
+    if not await check_admin(update, context): return
+    if not db:
+        await update.message.reply_text("Database not available.")
+        return
+
+    group_id = update.effective_chat.id
+
+    if group_id in autonomous_tasks:
+        await update.message.reply_text("⚠️ Autonomous mode is already running in this chat!")
+        return
+
+    # Create the background task for the loop
+    task = context.application.create_task(autonomous_quiz_worker(group_id, context))
+    autonomous_tasks[group_id] = task
+    
+    await update.message.reply_text(
+        "🚀 **Autonomous Mode Enabled!**\n"
+        "I will now cycle through saved chapters 24/7.\n"
+        "• 10 questions (default) per chapter\n"
+        "• 2 minutes rest between quizzes\n"
+        "• Use `/stop_autonomous` to stop.",
+        parse_mode="Markdown"
+    )
+
+@check_frozen
+async def stop_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Stops the autonomous loop and the current quiz."""
+    if not await check_admin(update, context): return
+
+    group_id = update.effective_chat.id
+
+    if group_id not in autonomous_tasks:
+        await update.message.reply_text("⚠️ Autonomous mode is not running.")
+        return
+
+    # 1. Cancel the Supervisor Task
+    task = autonomous_tasks[group_id]
+    task.cancel()
+    del autonomous_tasks[group_id]
+
+    # 2. Stop the CURRENT ongoing quiz using existing logic
+    # This sets is_active=False, which stops the question loop inside run_quiz_background
+    if group_id in quiz_sessions:
+        quiz_sessions[group_id]['is_active'] = False
+        
+        # Clean up polls immediately
+        poll_ids = quiz_sessions[group_id].get('poll_ids', [])
+        for pid in poll_ids:
+            active_polls.pop(pid, None)
+            await _delete_active_poll_from_db(pid)
+            
+        await _delete_quiz_session_from_db(group_id)
+        quiz_sessions.pop(group_id, None)
+
+    await update.message.reply_text("🛑 **Autonomous Mode Stopped.**")
 
 
 @owner_override
@@ -3597,6 +3783,14 @@ async def main() -> None:
     application.add_handler(CommandHandler("quiz", start_quiz))
     application.add_handler(CommandHandler("stop_quiz", stop_quiz))
     application.add_handler(CommandHandler("change_timing", change_quiz_timing))
+    # ... inside main() ...
+
+    # Autonomous Quiz Features
+    application.add_handler(CommandHandler("quiz_autonomous", start_autonomous))
+    application.add_handler(CommandHandler("stop_autonomous", stop_autonomous))
+    application.add_handler(CommandHandler("set_auto_questions", set_auto_questions))
+    
+    # ... rest of your handlers ...
 
     # --- NEW: Handle Mentions and Replies for AI ---
     # Triggers ask_ai if:
