@@ -2668,20 +2668,19 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
 @check_frozen
 async def set_auto_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
-
     if not context.args:
         return await update.message.reply_text("Usage: /set_auto_questions <number>")
 
     try:
         num = int(context.args[0])
+        if num < 1:
+            return await update.message.reply_text("❌ Number must be ≥ 1.")
     except:
         return await update.message.reply_text("❌ Invalid number.")
 
-    if num < 1:
-        return await update.message.reply_text("❌ Number must be 1 or more.")
-
     auto_question_count[chat_id] = num
-    await update.message.reply_text(f"📝 Autonomous quizzes will now use **{num} questions each.**")
+    await update.message.reply_text(f"📝 Autonomous quizzes will now have **{num} questions each.**")
+
 
 
 
@@ -2694,7 +2693,8 @@ async def quiz_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     autonomous_running[chat_id] = True
     autonomous_tasks[chat_id] = asyncio.create_task(run_autonomous_quiz(chat_id, context))
-    await update.message.reply_text("🚀 Autonomous quiz started! The bot will now run quizzes continuously.")
+    await update.message.reply_text("🚀 Autonomous quiz started! The bot will run quizzes continuously.")
+
 
 
 @check_frozen
@@ -2712,10 +2712,11 @@ async def stop_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+
 async def run_autonomous_quiz(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     while autonomous_running.get(chat_id, False):
 
-        # READ CHAPTERS FROM ncert_chapters COLLECTION
+        # Fetch NCERT chapters
         chapters_ref = db.collection("ncert_chapters")
         chapter_docs = await asyncio.to_thread(lambda: list(chapters_ref.stream()))
 
@@ -2728,35 +2729,33 @@ async def run_autonomous_quiz(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             if not autonomous_running.get(chat_id, False):
                 return
 
-            chapter = chapter_doc.id
+            chapter_name = chapter_doc.id
             data = chapter_doc.to_dict()
-
-            # extract pdf file id
             file_id = data.get("file_id")
+
             if not file_id:
-                await context.bot.send_message(chat_id, f"⚠ No file found for chapter: {chapter}. Skipping...")
+                await context.bot.send_message(chat_id, f"⚠ No file found for chapter: {chapter_name}. Skipping...")
                 continue
 
-            # number of questions set by user (fallback = 10)
             num_q = auto_question_count.get(chat_id, 10)
-
-            await context.bot.send_message(chat_id, f"📘 Starting quiz from **{chapter}**")
+            await context.bot.send_message(chat_id, f"📘 Starting quiz from **{chapter_name.replace('_', ' ').title()}**")
 
             try:
-                # call your normal quiz system
-                await start_quiz_internal(chat_id, context, chapter, num_q, file_id)
-                # ⚠ NOTE: start_quiz_internal() must accept file_id instead of pdf_url
-                # If your function still expects pdf_url, tell me — I will convert file_id → file_url properly.
+                # EXACT SAME BACKGROUND FUNCTION USED BY /quiz COMMAND
+                context.application.create_task(
+                    run_quiz_background(chat_id, file_id, chapter_name, num_q, context)
+                )
 
             except Exception as e:
-                await context.bot.send_message(chat_id, f"❌ Error during quiz for {chapter}: {e}")
+                await context.bot.send_message(chat_id, f"❌ Error during quiz for {chapter_name}: {e}")
                 continue
 
-            # after leaderboard and XP inside quiz system
-            await context.bot.send_message(chat_id, "😴 Resting 2 minutes before next chapter...")
+            # Wait for leaderboard + XP distribution INSIDE quiz system
+            await context.bot.send_message(chat_id, "😴 Resting for 2 minutes before next chapter...")
             await asyncio.sleep(120)
 
-        # after last chapter → start again automatically
+        # After last chapter → loop again
+
 
 
 # --- NCERT Quiz Feature (New) ---
