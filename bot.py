@@ -48,6 +48,8 @@ active_polls = {}
 
 autonomous_tasks = {}
 autonomous_running = {}
+auto_question_count = {}
+
 
 
 # Gemini Configuration (Updated for Gemini 2.5 Flash)
@@ -2663,6 +2665,25 @@ async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
         print(e)
         await update.message.reply_text("⚠ Unable to fetch profile. Please try again later.")
 
+@check_frozen
+async def set_auto_questions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = update.effective_chat.id
+
+    if not context.args:
+        return await update.message.reply_text("Usage: /set_auto_questions <number>")
+
+    try:
+        num = int(context.args[0])
+    except:
+        return await update.message.reply_text("❌ Invalid number.")
+
+    if num < 1:
+        return await update.message.reply_text("❌ Number must be 1 or more.")
+
+    auto_question_count[chat_id] = num
+    await update.message.reply_text(f"📝 Autonomous quizzes will now use **{num} questions each.**")
+
+
 
 @check_frozen
 async def quiz_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2673,11 +2694,15 @@ async def quiz_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     autonomous_running[chat_id] = True
     autonomous_tasks[chat_id] = asyncio.create_task(run_autonomous_quiz(chat_id, context))
-    await update.message.reply_text("🚀 Autonomous quiz started! The bot will run quizzes continuously.")
+    await update.message.reply_text("🚀 Autonomous quiz started! The bot will now run quizzes continuously.")
+
 
 @check_frozen
-async def stop_quiz_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def stop_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
+
+    if not autonomous_running.get(chat_id):
+        return await update.message.reply_text("⛔ Autonomous quiz is not running.")
 
     autonomous_running[chat_id] = False
     task = autonomous_tasks.get(chat_id)
@@ -2686,36 +2711,48 @@ async def stop_quiz_autonomous(update: Update, context: ContextTypes.DEFAULT_TYP
     await update.message.reply_text("🛑 Autonomous quiz stopped.")
 
 
+
 async def run_autonomous_quiz(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
     while autonomous_running.get(chat_id, False):
 
-        # 1. Firestore se chapters read
+        # Get chapters from Firestore
         chapters_ref = db.collection("groups").document(str(chat_id)).collection("chapters")
-        chapters = await asyncio.to_thread(lambda: [doc.id for doc in chapters_ref.stream()])
+        chapter_docs = await asyncio.to_thread(lambda: list(chapters_ref.stream()))
 
-        if not chapters:
+        if not chapter_docs:
             await context.bot.send_message(chat_id, "⚠ No chapters found in Firestore.")
             autonomous_running[chat_id] = False
             return
 
-        for chapter in chapters:
+        for chapter_doc in chapter_docs:
             if not autonomous_running.get(chat_id, False):
                 return
 
-            await context.bot.send_message(chat_id, f"📘 Starting quiz from chapter: **{chapter}**")
+            chapter = chapter_doc.id
+            data = chapter_doc.to_dict()
+            pdf_url = data.get("pdf_url") if data else None
+
+            if not pdf_url:
+                await context.bot.send_message(chat_id, f"⚠ PDF missing for chapter: {chapter}. Skipping...")
+                continue
+
+            num_q = auto_question_count.get(chat_id, 10)  # default 10 unless user set
+            await context.bot.send_message(chat_id, f"📘 Starting quiz from **{chapter}**")
 
             try:
-                # Generate quiz questions here directly from your existing function
-                await start_quiz_internal(chat_id, context, chapter)   # ⚠ Use your own quiz start function
+                # Your normal quiz start function
+                await start_quiz_internal(chat_id, context, chapter, num_q, pdf_url)
+
             except Exception as e:
-                await context.bot.send_message(chat_id, f"❌ Error while running quiz for {chapter}: {e}")
+                await context.bot.send_message(chat_id, f"❌ Error in quiz for {chapter}: {e}")
+                continue
 
-            # XP + leaderboard are handled inside your quiz system already
+            # After quiz ends, leaderboard & XP already handled inside quiz engine
+            await context.bot.send_message(chat_id, "😴 Resting for 2 minutes before next chapter...")
+            await asyncio.sleep(120)
 
-            await context.bot.send_message(chat_id, "⏳ Bot is resting for **2 minutes** before next chapter...")
-            await asyncio.sleep(120)  # 2 min gap
+        # After last chapter → start again from beginning
 
-        # When last chapter finishes → repeat from beginning again
 
 # --- NCERT Quiz Feature (New) ---
 
@@ -3658,7 +3695,8 @@ async def main() -> None:
     application.add_handler(CommandHandler("stop_quiz", stop_quiz))
     application.add_handler(CommandHandler("change_timing", change_quiz_timing))
     application.add_handler(CommandHandler("quiz_autonomous", quiz_autonomous))
-    application.add_handler(CommandHandler("stop_autonomous", stop_quiz_autonomous))
+    application.add_handler(CommandHandler("stop_autonomous", stop_autonomous))
+    application.add_handler(CommandHandler("set_auto_questions", set_auto_questions))
 
 
     # --- NEW: Handle Mentions and Replies for AI ---
