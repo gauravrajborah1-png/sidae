@@ -2741,10 +2741,13 @@ async def run_autonomous_quiz(chat_id: int, context: ContextTypes.DEFAULT_TYPE):
             await context.bot.send_message(chat_id, f"📘 Starting quiz from **{chapter_name.replace('_', ' ').title()}**")
 
             try:
-                # EXACT SAME BACKGROUND FUNCTION USED BY /quiz COMMAND
+                quiz_sessions[chat_id] = {'scores': {}, 'poll_ids': [], 'is_active': True}
+                await _save_quiz_session_to_db(chat_id, quiz_sessions[chat_id])
+
                 context.application.create_task(
                     run_quiz_background(chat_id, file_id, chapter_name, num_q, context)
                 )
+
 
             except Exception as e:
                 await context.bot.send_message(chat_id, f"❌ Error during quiz for {chapter_name}: {e}")
