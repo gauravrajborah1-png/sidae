@@ -2455,7 +2455,7 @@ async def reward_top_three(group_id: int, bot, chat_id: int = None):
         scores = session["scores"]
         sorted_players = sorted(
             scores.items(),
-            key=lambda x: (-x[1].get("score", 0), x[1].get("time", float("inf")))
+            key=lambda x: (-x[1].get("score", 0), x[1].get("total_time", float("inf")))
         )
 
 
