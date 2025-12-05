@@ -734,37 +734,42 @@ async def update_warn_count(group_id: int, user_id: int, change: int):
 
 
 async def update_user_data(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Stores/updates the user's data (ID, username, name, timestamp) in Firestore.
-    
-    This function uses merge=True so it only updates the specified fields 
-    and does not disturb other existing data for the user.
-    """
-    # Ensure this update originated from a specific user (and not a channel or service message without a user)
+    """Stores/updates user data. Ensures XP/Reputation fields exist for indexing."""
     if update.effective_user:
         user = update.effective_user
-        
-        # We only want to log real users, not bots
         if user.is_bot:
             return
 
-        user_data = {
-            # user_id is redundant but helpful for indexing/querying
-            'user_id': user.id, 
-            'username': user.username,
-            'first_name': user.first_name,
-            'last_name': user.last_name,
-            # Use Firestore's server timestamp to accurately track the last interaction time
-            'last_seen': firestore.SERVER_TIMESTAMP, 
-        }
+        user_ref = db.collection('users').document(str(user.id))
+        
+        # Run DB operations in a thread to avoid blocking the bot
+        def sync_user_update():
+            doc = user_ref.get()
+            if not doc.exists:
+                # NEW USER: Set defaults so they appear in Leaderboards
+                user_ref.set({
+                    'user_id': user.id,
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'xp': 0,          # <--- FIX: Initialize XP
+                    'reputation': 0,  # <--- FIX: Initialize Rep
+                    'league': 'Bronze',
+                    'last_seen': firestore.SERVER_TIMESTAMP,
+                })
+            else:
+                # EXISTING USER: Just update basic info and timestamp
+                user_ref.set({
+                    'user_id': user.id,
+                    'username': user.username,
+                    'first_name': user.first_name,
+                    'last_name': user.last_name,
+                    'last_seen': firestore.SERVER_TIMESTAMP,
+                }, merge=True)
 
-        # Use the user ID as the document ID for efficient lookups
         try:
-            # The .set(..., merge=True) ensures that we only update these fields 
-            # and create the document if it doesn't exist, preserving any other user data.
-            db.collection('users').document(str(user.id)).set(user_data, merge=True)
-            # logging.debug(f"User data updated for ID: {user.id}") # Uncomment for debugging
+            await asyncio.to_thread(sync_user_update)
         except Exception as e:
-            # Log any potential errors with the database operation
             logging.error(f"Error updating user data for {user.id}: {e}")
         
 # --- Firestore persistence helpers for live quiz state ---
@@ -2513,7 +2518,7 @@ async def local_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
         group_id = update.effective_chat.id
         await update.effective_chat.send_chat_action("typing")
 
-        # 1️⃣ fetch all users that belong to this group
+        # 1. Fetch group members who have played in this group
         def fetch_group_users():
             return list(
                 db.collection("group_scores")
@@ -2524,36 +2529,42 @@ async def local_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         group_docs = await asyncio.to_thread(fetch_group_users)
         if not group_docs:
-            return await update.message.reply_text("No leaderboard data found yet 😕")
+            return await update.message.reply_text("No leaderboard data found yet 😕\n(Wait for a quiz to finish or use /stop_quiz to save current scores)")
 
-        # 2️⃣ fetch XP for each user
         leaderboard = []
+
+        # 2. Process users
         for doc in group_docs:
             gdata = doc.to_dict()
             user_id = gdata.get("user_id")
-            username = gdata.get("username", f"User {user_id}")
+            # Fallback name from group_scores if global user data is missing
+            username = gdata.get("username", f"User {user_id}") 
 
-            # Get XP + league from users DB
-            def fetch_user_db():
-                return db.collection("users").document(str(user_id)).get()
+            # Fetch User Profile for global XP and League
+            try:
+                def get_user_xp():
+                    u_doc = db.collection("users").document(str(user_id)).get()
+                    if u_doc.exists:
+                        return u_doc.to_dict()
+                    return {}
+                
+                udata = await asyncio.to_thread(get_user_xp)
+                xp = udata.get("xp", 0)
+                league = udata.get("league", "Bronze")
+                
+                leaderboard.append({
+                    "username": username,
+                    "xp": xp,
+                    "league": league
+                })
+            except Exception as e:
+                # If one user fails, skip them but don't crash the command
+                continue
 
-            user_doc = await asyncio.to_thread(fetch_user_db)
-            udata = user_doc.to_dict() if user_doc and user_doc.exists else {}
-
-            xp = udata.get("xp", 0)
-            league = udata.get("league", "rookie")
-
-            leaderboard.append({
-                "user_id": user_id,
-                "username": username,
-                "xp": xp,
-                "league": league
-            })
-
-        # 3️⃣ sort by XP descending
+        # 3. Sort by XP descending
         leaderboard.sort(key=lambda x: x["xp"], reverse=True)
 
-        # 4️⃣ build message
+        # 4. Build message
         msg = f"🏆 <b>GROUP XP LEADERBOARD</b> 🏆\n<b>{update.effective_chat.title}</b>\n\n"
         for i, u in enumerate(leaderboard[:20], start=1):
             medal = "👑🥇" if i == 1 else "🥈" if i == 2 else "🥉" if i == 3 else f"{i}."
@@ -2565,7 +2576,6 @@ async def local_leaderboard(update: Update, context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"local_leaderboard error in chat {update.effective_chat.id}: {e}")
         await update.message.reply_text("⚠️ Error fetching leaderboard.")
-
 
 
 # ============================
@@ -3166,10 +3176,9 @@ async def cleanup_quiz_data(group_id: int):
 
 @check_frozen
 async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Immediately stops an ongoing quiz & shows partial leaderboard."""
+    """Immediately stops an ongoing quiz & SAVES SCORES to DB."""
     chat_id = update.effective_chat.id
 
-    # If no active session
     if chat_id not in quiz_sessions:
         await update.message.reply_text("⚠️ No ongoing quiz to stop.")
         return
@@ -3178,16 +3187,11 @@ async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     scores = session.get("scores", {})
     poll_ids = session.get("poll_ids", [])
 
-    # ============================
-    # 💥 Stop any further questions
-    # ============================
-    # NEW: Signal the background task to stop immediately
+    # 1. Stop background activity (Signals the loop in run_quiz_background to break)
     if chat_id in quiz_sessions:
         quiz_sessions[chat_id]['is_active'] = False
-    # (No future polls will be sent because /stop_quiz prevents reaching sending loop)
-    # But we should clean active polls
 
-    # Delete all active polls for this chat
+    # 2. Clean up Active Polls
     for pid in poll_ids:
         active_polls.pop(pid, None)
         try:
@@ -3195,27 +3199,29 @@ async def stop_quiz(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         except:
             pass
 
-    # ============================
-    # 🧹 Clean DB session storage
-    # ============================
+    # =======================================================
+    # 🔥 CRITICAL FIX: Save scores to DB before deleting!
+    # =======================================================
+    if scores:
+        await save_group_scores_to_db(chat_id)
+
+    # 3. Clean DB session storage
     try:
         await _delete_quiz_session_from_db(chat_id)
     except:
         pass
 
-    # Remove from memory
+    # 4. Remove from memory
     quiz_sessions.pop(chat_id, None)
 
-    # ============================
-    # 📊 Show Partial Leaderboard
-    # ============================
+    # 5. Show Partial Leaderboard
     if not scores:
         await update.message.reply_text("🛑 Quiz stopped.\nNo scores recorded yet.")
         return
 
     ranked = sorted(scores.values(), key=lambda x: (-x["score"], x["total_time"]))
 
-    leaderboard = "🛑 **Quiz Stopped Prematurely**\n\n📊 **Partial Leaderboard**:\n\n"
+    leaderboard = "🛑 **Quiz Stopped Manually**\n(Scores have been saved)\n\n📊 **Session Leaderboard**:\n\n"
     for i, user in enumerate(ranked, 1):
         leaderboard += f"{i}. **{user['name']}** — {user['score']} pts ({user['total_time']:.2f}s)\n"
 
