@@ -57,8 +57,12 @@ OPENWEATHER_API_KEY = "71f9cff3b805051c09d0c73f0ff81424"
 
 # 2. Logging Setup
 logging.basicConfig(
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=os.getenv("LOG_LEVEL", "WARNING")
 )
+
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # 3. Firestore Database Setup
