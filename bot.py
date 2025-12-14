@@ -953,7 +953,7 @@ async def bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if old_status in ["kicked", "left"] and new_status in ["member", "administrator"]:
         chat = update.effective_chat
 
-         START_TEXT = (
+        START_TEXT = (
             "Hey! I'm Sîdæ { your fev Anya Chan }😊 . I am a group management bot made by saniya {urf chhoti don}🌸 , here to help you get around and keep the order in your groups!\n"
             "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more⚡💫...\n\n" 
 
