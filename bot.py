@@ -84,6 +84,16 @@ except Exception as e:
 
 # --- Global Bot State Management (For Owner Control Panel) ---
 
+def get_welcome_image_file_id():
+    try:
+        doc = db.collection("bot_config").document("welcome_image").get()
+        if doc.exists:
+            return doc.to_dict().get("file_id")
+    except:
+        pass
+    return None
+
+
 # Fetches the global bot state (used for /freeze and /resume)
 async def get_bot_state() -> dict:
     """Fetches the global bot settings document from Firestore."""
@@ -886,7 +896,7 @@ async def _delete_quiz_session_from_db(group_id: int):
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Sends a welcome message with bot information and tracks the chat for broadcasting."""
     # Start command text (UNCHANGED)
-    await update.message.reply_text(
+    START_TEXT = (
         "Hey! I'm Sîdæ { your fev Anya Chan }😊 . I am a group management bot made by saniya {urf chhoti don}🌸 , here to help you get around and keep the order in your groups!\n"
         "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more⚡💫...\n\n" 
 
@@ -897,6 +907,22 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
         "All commands can be used with the following: / !"
         "\n\n𝙏𝙝𝙖𝙣𝙠 𝙮𝙤𝙪 🌷"
     )
+    image_file_id = get_welcome_image_file_id()
+
+    if image_file_id:
+        await update.message.reply_photo(
+            photo=image_file_id,
+            caption=START_TEXT,
+            parse_mode="HTML"
+        )
+
+    
+    else:
+        await update.message.reply_text(
+            text=START_TEXT,
+            parse_mode="HTML"
+        )
+
 
     # --- Track chat for broadcast functionality in the global 'broadcast_chats' collection ---
     if db and update.effective_chat.type in ["group", "supergroup", "private"]:
@@ -927,21 +953,36 @@ async def bot_added_to_group(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if old_status in ["kicked", "left"] and new_status in ["member", "administrator"]:
         chat = update.effective_chat
 
-        # 1. Send the same welcome message as /start
-        await context.bot.send_message(
-            chat_id=chat.id,
-            text=(
-                "Hey! I'm Sîdæ { your fev Anya Chan }😊. I am a group management bot made by saniya {urf chhoti don}🌸 , here to help you get around and keep the order in your groups!\n"
-                "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more⚡💫...\n\n" 
+         START_TEXT = (
+            "Hey! I'm Sîdæ { your fev Anya Chan }😊 . I am a group management bot made by saniya {urf chhoti don}🌸 , here to help you get around and keep the order in your groups!\n"
+            "I have lots of handy features, such as flood control, a warning system, a note keeping system,quiz in group , study related doubt solving , even predetermined replies on certain keywords and many more⚡💫...\n\n" 
 
-                "𝙃𝙚𝙡𝙥𝙛𝙪𝙡 𝙘𝙤𝙢𝙢𝙖𝙣𝙙𝙨:\n"
-                "- /start: Starts me! You've probably already used this.\n"
-                "- /help: Sends this message; I'll tell you more about myself!\n"
+            "𝙃𝙚𝙡𝙥𝙛𝙪𝙡 𝙘𝙤𝙢𝙢𝙖𝙣𝙙𝙨:\n"
+            "- /start: Starts me! You've probably already used this.\n"
+            "- /help: Sends this message; I'll tell you more about myself!\n"
 
-                "All commands can be used with the following: / !"
-                "\n\n𝙏𝙝𝙖𝙣𝙠 𝙮𝙤𝙪 🌷"
-            )
+            "All commands can be used with the following: / !"
+            "\n\n𝙏𝙝𝙖𝙣𝙠 𝙮𝙤𝙪 🌷"
         )
+
+        # 1. Send the same welcome message as /start
+        image_file_id = get_welcome_image_file_id()
+
+        if image_file_id:
+            await context.bot.send_photo(
+                chat_id=update.effective_chat.id,
+                photo=image_file_id,
+                caption=START_TEXT,
+                parse_mode="HTML"
+            )
+
+        else:
+            await context.bot.send_message(
+                chat_id=update.effective_chat.id,
+                text=START_TEXT,
+                parse_mode="HTML"
+            )
+        
 
         # 2. Run the broadcast chat saving logic
         if db:
@@ -3501,6 +3542,37 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
 
 
 # --- Owner Control Panel Commands ---
+
+@owner_override
+async def set_welcome_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update.effective_user.id):
+        return await update.message.reply_text("❌ This command is owner-only.")
+
+    if not update.message.reply_to_message or not update.message.reply_to_message.photo:
+        return await update.message.reply_text(
+            "⚠️ Please reply to an image using /image"
+        )
+
+    photo = update.message.reply_to_message.photo[-1]
+    file_id = photo.file_id
+
+    try:
+        doc_ref = db.collection("bot_config").document("welcome_image")
+
+        # overwrite old image (auto delete old ref)
+        doc_ref.set({
+            "file_id": file_id
+        })
+
+        await update.message.reply_text(
+            "✅ Welcome image updated successfully."
+        )
+
+    except Exception as e:
+        await update.message.reply_text(
+            f"❌ Failed to save image.\nError: {e}"
+        )
+
 # --- Owner-only: Send active countdowns to all tracked groups ---
 @owner_override
 async def send_countdown(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3795,6 +3867,8 @@ async def main() -> None:
     application.add_handler(CommandHandler("resume_bot", resume_bot))
     application.add_handler(CommandHandler("list_chats", list_chats))
     application.add_handler(CommandHandler("send_countdown", send_countdown))
+    application.add_handler(CommandHandler("image", set_welcome_image))
+
 
     # NCERT Quiz Feature
     application.add_handler(CommandHandler("save_chapter", save_chapter))
