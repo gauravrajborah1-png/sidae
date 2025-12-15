@@ -47,6 +47,18 @@ active_polls = {}
 # Maps group_id -> asyncio.Task (The background supervisor task)
 autonomous_tasks = {}
 
+MOOD_REACTIONS = {
+    "question": ["🤔", "❓", "🧠"],
+    "joke": ["😂", "🤣", "😆"],
+    "hype": ["🔥", "💯", "🚀", "👏"],
+    "love": ["❤️", "😍", "🥰"],
+    "sad": ["😢", "💔", "🫂"],
+    "angry": ["😡", "🤬"],
+    "agree": ["👍", "🤝"],
+    "neutral": ["👍", "🙂", "😎"]
+}
+
+
 # Gemini Configuration (Updated for Gemini 2.5 Flash)
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY") # Use this environment variable now
 GEMINI_API_URL = "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent"
@@ -197,6 +209,65 @@ async def allow(update: Update, context: CallbackContext):
         await update.message.reply_text(
             f"Chat {chat_id} is not frozen."
         )
+
+
+def detect_mood(text: str) -> str:
+    t = text.lower()
+
+    # ❓ Question
+    if "?" in t or t.startswith(("why", "how", "what", "when", "where", "can", "is")):
+        return "question"
+
+    # 😂 Joke / fun
+    if any(w in t for w in ["lol", "lmao", "haha", "😂", "🤣", "funny"]):
+        return "joke"
+
+    # 🔥 Hype / achievement
+    if any(w in t for w in ["wow", "awesome", "great", "op", "legend", "fire", "lit"]):
+        return "hype"
+
+    # ❤️ Love / appreciation
+    if any(w in t for w in ["love", "thanks", "thank you", "❤️", "😍"]):
+        return "love"
+
+    # 😢 Sad
+    if any(w in t for w in ["sad", "cry", "depressed", "tired", "hurt"]):
+        return "sad"
+
+    # 😡 Angry
+    if any(w in t for w in ["angry", "hate", "stupid", "idiot", "mad"]):
+        return "angry"
+
+    # 👍 Agreement
+    if any(w in t for w in ["yes", "true", "right", "agreed", "correct"]):
+        return "agree"
+
+    return "neutral"
+
+async def save_allowed_reactions(group_id: int, reactions: list[str]):
+    if not db:
+        return
+    try:
+        ref = db.collection("group_settings").document(str(group_id))
+        await asyncio.to_thread(
+            ref.set,
+            {"allowed_reactions": reactions},
+            merge=True
+        )
+    except Exception as e:
+        logger.error(f"Failed to save reactions: {e}")
+
+
+async def is_auto_reaction_enabled(group_id: int) -> bool:
+    if not db:
+        return False
+    try:
+        ref = db.collection("group_settings").document(str(group_id))
+        doc = await asyncio.to_thread(ref.get)
+        return doc.to_dict().get("auto_reaction", False) if doc.exists else False
+    except Exception as e:
+        logger.error(f"Auto reaction check failed: {e}")
+        return False
 
 
 # --- AI Personality Mode Management ---
@@ -3457,6 +3528,107 @@ async def stop_autonomous(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 
     await update.message.reply_text("🛑 **Autonomous Mode Stopped.**")
 
+@check_frozen
+async def auto_react_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    msg = update.message
+    chat = update.effective_chat
+
+    if not msg or not msg.text:
+        return
+
+    if chat.type not in ["group", "supergroup"]:
+        return
+
+    if msg.text.startswith("/"):
+        return
+
+    if not await is_auto_reaction_enabled(chat.id):
+        return
+
+    # 🧠 Detect mood
+    mood = detect_mood(msg.text)
+    mood_pool = MOOD_REACTIONS.get(mood, MOOD_REACTIONS["neutral"])
+
+    # 🔁 Get learned allowed reactions
+    allowed = await get_allowed_reactions(chat.id)
+
+    # ✅ Intersection
+    possible = [r for r in mood_pool if r in allowed]
+
+    if not possible:
+        possible = allowed  # fallback
+
+    if not possible:
+        return
+
+    chosen = random.choice(possible)
+
+    try:
+        await context.bot.set_message_reaction(
+            chat_id=chat.id,
+            message_id=msg.message_id,
+            reaction=chosen
+        )
+
+    except Exception:
+        # ❌ Remove blocked reaction and relearn
+        if chosen in allowed:
+            allowed.remove(chosen)
+            await save_allowed_reactions(chat.id, allowed)
+
+DEFAULT_REACTIONS_POOL = [
+    "👍", "❤️", "🔥", "😂", "👏", "😎", "🤯", "💯", "😍",
+    "🥰", "😁", "🤝", "🎉", "🤩"
+]
+
+async def get_allowed_reactions(group_id: int) -> list[str]:
+    if not db:
+        return DEFAULT_REACTIONS_POOL
+
+    try:
+        ref = db.collection("group_settings").document(str(group_id))
+        doc = await asyncio.to_thread(ref.get)
+
+        data = doc.to_dict() if doc.exists else {}
+        reactions = data.get("allowed_reactions")
+
+        return reactions if reactions else DEFAULT_REACTIONS_POOL.copy()
+    except Exception as e:
+        logger.error(f"Failed to get reactions: {e}")
+        return DEFAULT_REACTIONS_POOL.copy()
+
+@check_frozen
+async def reaction_on(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context):
+        return
+
+    group_id = update.effective_chat.id
+    ref = db.collection("group_settings").document(str(group_id))
+
+    await asyncio.to_thread(ref.set, {"auto_reaction": True}, merge=True)
+
+    await update.message.reply_text(
+        "😄 Auto reactions are now *ON* for this chat!",
+        parse_mode="Markdown"
+    )
+
+
+@check_frozen
+async def reaction_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context):
+        return
+
+    group_id = update.effective_chat.id
+    ref = db.collection("group_settings").document(str(group_id))
+
+    await asyncio.to_thread(ref.set, {"auto_reaction": False}, merge=True)
+
+    await update.message.reply_text(
+        "🛑 Auto reactions are now *OFF* for this chat!",
+        parse_mode="Markdown"
+    )
+
+
 
 @owner_override
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -3882,7 +4054,11 @@ async def main() -> None:
     application.add_handler(CommandHandler("stop_autonomous", stop_autonomous))
     application.add_handler(CommandHandler("set_auto_questions", set_auto_questions))
     
-    # ... rest of your handlers ...
+    # ... handle reactions ...
+    application.add_handler(CommandHandler("reaction_on", reaction_on))
+    application.add_handler(CommandHandler("reaction_off", reaction_off))
+    application.add_handler(CommandHandler("reaction_reset", reaction_reset))
+
 
     # --- NEW: Handle Mentions and Replies for AI ---
     # Triggers ask_ai if:
@@ -3917,6 +4093,8 @@ async def main() -> None:
 
     # 4. Handle Banned Words (Delete and Warn for Text)
     application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_banned_words))
+
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auto_react_handler), group=99)
 
     
 
