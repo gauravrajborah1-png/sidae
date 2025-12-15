@@ -3628,6 +3628,18 @@ async def reaction_off(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="Markdown"
     )
 
+@check_frozen
+async def reaction_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not await check_admin(update, context):
+        return
+
+    ref = db.collection("group_settings").document(str(update.effective_chat.id))
+    await asyncio.to_thread(
+        ref.update,
+        {"allowed_reactions": firestore.DELETE_FIELD}
+    )
+
+    await update.message.reply_text("♻️ Reaction list reset. Bot will relearn allowed reactions.")
 
 
 @owner_override
