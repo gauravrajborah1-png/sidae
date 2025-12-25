@@ -3644,7 +3644,6 @@ async def reaction_reset(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 @owner_override
 async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Owner-only command to broadcast a message to all tracked chats."""
     if not is_owner(update.effective_user.id):
         await update.message.reply_text("This command is restricted to the bot owner.")
         return
@@ -3652,78 +3651,51 @@ async def broadcast_message(update: Update, context: ContextTypes.DEFAULT_TYPE) 
         await update.message.reply_text("Database not available.")
         return
 
-    # --- NEW FEATURE: Broadcast replied message ---
-    replied = update.message.reply_to_message
-    if replied:
-        if replied.text:
-            message_to_send = replied.text
-        elif replied.caption:
-            message_to_send = replied.caption
-        else:
-            await update.message.reply_text("Replied message has no text to broadcast.")
-            return
-    
-       
+    # --- IDENTIFY SOURCE AND BUTTONS ---
+    if update.message.reply_to_message:
+        broadcast_source_chat_id = update.effective_chat.id
+        broadcast_message_id = update.message.reply_to_message.message_id
+        # capture the buttons (reply_markup) from the replied message
+        broadcast_markup = update.message.reply_to_message.reply_markup
     else:
-        # Old method: /broadcast <message>
-        if len(context.args) < 1:
-            await update.message.reply_text(
-                "Reply to a message with /broadcast or use /broadcast <message>.",
-                parse_mode="Markdown"
-            )
+        if not context.args:
+            await update.message.reply_text("Reply to a message with /broadcast.")
             return
-        
-        # Extract message normally
-        message_to_send = re.sub(r'/\w+\s*', '', update.message.text, 1)
+        broadcast_source_chat_id = update.effective_chat.id
+        broadcast_message_id = update.message.message_id
+        broadcast_markup = None # Text-only command usually has no buttons
 
-    
-    # 1. Fetch all chat IDs from the 'broadcast_chats' collection
     chats_ref = db.collection("broadcast_chats")
     
     try:
         chats_snapshot = await asyncio.to_thread(chats_ref.stream)
-        
         sent_count = 0
         failed_count = 0
-        
-        # Determine the source chat ID to skip sending the broadcast back to the owner's chat
-        source_chat_id = str(update.effective_chat.id)
+        source_id_str = str(update.effective_chat.id)
 
         for doc in chats_snapshot:
-            chat_data = doc.to_dict()
-            chat_id = chat_data.get("chat_id")
-            
-            if not chat_id or chat_id == source_chat_id:
+            chat_id = doc.to_dict().get("chat_id")
+            if not chat_id or str(chat_id) == source_id_str:
                 continue
 
             try:
-                # 2. Send the message to each chat
-                # We use HTML parsing for formatting (bold, links, etc.)
-                await context.bot.send_message(
+                # We explicitly pass the reply_markup here
+                await context.bot.copy_message(
                     chat_id=chat_id,
-                    text=message_to_send,
-                    parse_mode="HTML"
+                    from_chat_id=broadcast_source_chat_id,
+                    message_id=broadcast_message_id,
+                    reply_markup=broadcast_markup  # This ensures buttons are included
                 )
                 sent_count += 1
             except Exception as e:
-                # Catch exceptions like 'Bot was blocked by the user', 'Chat not found', etc.
-                logger.warning(f"Failed to send broadcast to chat {chat_id}: {e}")
-                # The exception might contain a Telegram error code that indicates the bot was kicked/left
-                # In a production setting, you might want to delete the chat from the broadcast_chats here.
+                logger.warning(f"Failed {chat_id}: {e}")
                 failed_count += 1
                 
-        # 3. Report the result back to the owner
         await update.message.reply_text(
-            f"✅ Broadcast complete!\n"
-            f"Sent to **{sent_count}** chats.\n"
-            f"Failed to send to **{failed_count}** chats (likely blocked or left the group).",
-            parse_mode="Markdown"
+            f"✅ Broadcast complete!\nSent: {sent_count} | Failed: {failed_count}"
         )
-        
     except Exception as e:
-        logger.error(f"Error during broadcast: {e}")
-        await update.message.reply_text(f"An unexpected database error occurred during broadcast: {e}")
-
+        await update.message.reply_text(f"Error: {e}")
 
 # --- Owner Control Panel Commands ---
 
